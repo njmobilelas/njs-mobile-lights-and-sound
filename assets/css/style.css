@@ -2862,3 +2862,53 @@ input, select, textarea, button {
   font-size:12.5px;
   line-height:1.45;
 }
+
+
+/* Dispatch source/category */
+.dispatch-source{
+  display:inline-flex;
+  align-items:center;
+  max-width:100%;
+  padding:5px 8px;
+  border-radius:999px;
+  font-size:10.5px;
+  font-weight:800;
+  line-height:1.25;
+  white-space:normal;
+}
+.dispatch-source.package{
+  background:#eaf4ff;
+  color:#195a9d;
+  border:1px solid #bfdaef;
+}
+.dispatch-source.backup{
+  background:#fff7df;
+  color:#7b5800;
+  border:1px solid #ead49a;
+}
+.dispatch-source.not-package{
+  background:#fff0f0;
+  color:#a12e2e;
+  border:1px solid #edc1c1;
+}
+.scan-dispatch-category{
+  margin:12px 0;
+  padding:11px 13px;
+  border:1px solid #cbdced;
+  border-radius:10px;
+  background:#f8fbff;
+}
+.scan-dispatch-category small{
+  display:block;
+  margin-bottom:3px;
+  color:#6b7f96;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  font-size:10px;
+  font-weight:800;
+}
+.scan-dispatch-category strong{
+  display:block;
+  color:#173f68;
+  overflow-wrap:anywhere;
+}

@@ -160,17 +160,67 @@ async function init(){bindGlobal();installResponsiveTableObserver();if(!configur
 async function signedIn(user){
   state.user=user;
   $('#loginScreen').classList.add('hidden');
+
   head('Dashboard',`Overview of ${businessName()}.`);
-  $('#viewRoot').innerHTML='<div class="panel loading-panel"><div class="loading-dots"><span></span><span></span><span></span></div><strong>Loading all system data…</strong><p class="muted">Please wait. The dashboard will appear after all required records finish loading.</p></div>';
+  $('#viewRoot').innerHTML=`
+    <div class="panel loading-panel">
+      <div class="loading-dots"><span></span><span></span><span></span></div>
+      <strong>Loading system data…</strong>
+      <p class="muted">Loading your role, permissions and available records.</p>
+    </div>`;
+
   status('SYNCING ALL DATA…');
-  const profileResult=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
-  state.profile=profileResult.data||{role:'staff',full_name:user.email};
-  await loadAll();
-  state.view=defaultLandingView();
-  renderNav();
-  status('DATABASE CONNECTED','connected');
-  render();
-  subscribeRealtime();
+
+  try{
+    // Profile first so the correct role is known before choosing a landing page.
+    const profileResult=await withDatabaseTimeout(
+      sb.from('profiles').select('*').eq('id',user.id).maybeSingle(),
+      'user profile',
+      10000
+    );
+
+    if(profileResult?.error){
+      console.warn('Profile load warning:',profileResult.error);
+    }
+
+    state.profile=profileResult?.data||{
+      role:'staff',
+      full_name:user.email
+    };
+
+    const loadResult=await loadAll();
+
+    // role_permissions is now loaded (or safely timed out). can() also has
+    // default role permissions as a fallback, so the UI can always continue.
+    state.view=defaultLandingView();
+
+    renderNav();
+    render();
+
+    if(loadResult?.errors?.length){
+      status('DATABASE CONNECTED • PARTIAL SYNC','connected');
+      toast(
+        `${loadResult.errors.length} database section${loadResult.errors.length===1?'':'s'} did not finish syncing. The system loaded the available data and will retry through realtime/manual refresh.`,
+        'warning'
+      );
+    }else{
+      status('DATABASE CONNECTED','connected');
+    }
+
+    subscribeRealtime();
+  }catch(err){
+    console.error('Initial system load failed:',err);
+
+    // Never leave a logged-in user permanently on the loading screen.
+    state.view=defaultLandingView();
+    renderNav();
+    render();
+
+    status('DATABASE CONNECTED • LOAD WARNING','connected');
+    toast('The system opened with available data. Use Refresh if a section is still missing.','warning');
+
+    subscribeRealtime();
+  }
 }
 
 let realtimeReloadTimer=null;
@@ -211,45 +261,116 @@ function scheduleRealtimeReload(source='realtime'){
   },180);
 }
 
+
+function withDatabaseTimeout(promise,table,ms=12000){
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise(resolve=>{
+      setTimeout(()=>{
+        resolve({
+          data:null,
+          error:{
+            message:`${table} load timed out after ${Math.round(ms/1000)} seconds.`,
+            code:'CLIENT_LOAD_TIMEOUT',
+            table,
+            timedOut:true
+          }
+        });
+      },ms);
+    })
+  ]);
+}
+
 async function loadAll(){
   if(dataLoadPromise)return dataLoadPromise;
+
   dataLoadPromise=(async()=>{
-    const tables=['clients','catalog_categories','catalog_items','library_categories','library_items','catalog_library_links','inventory_categories','equipment_types','inventory_items','transaction_categories','transaction_library_links','transactions','transaction_additional_charges','coupons','transaction_inventory_addons','transaction_package_addons','payments','expenses','repair_records','transaction_checklist','catalog_inventory_links','catalog_equipment_type_requirements','transaction_equipment_type_requirements','pos_products','pos_sales','pos_sale_items','equipment_movement_logs','audit_logs','profiles','role_permissions'];
+    const tables=[
+      'clients',
+      'catalog_categories',
+      'catalog_items',
+      'library_categories',
+      'library_items',
+      'catalog_library_links',
+      'inventory_categories',
+      'equipment_types',
+      'inventory_items',
+      'transaction_categories',
+      'transaction_library_links',
+      'transactions',
+      'transaction_additional_charges',
+      'coupons',
+      'transaction_inventory_addons',
+      'transaction_package_addons',
+      'payments',
+      'expenses',
+      'repair_records',
+      'transaction_checklist',
+      'catalog_inventory_links',
+      'catalog_equipment_type_requirements',
+      'transaction_equipment_type_requirements',
+      'pos_products',
+      'pos_sales',
+      'pos_sale_items',
+      'equipment_movement_logs',
+      'audit_logs',
+      'profiles',
+      'role_permissions'
+    ];
+
     const results=await Promise.all(tables.map(async t=>{
       try{
         let q=sb.from(t).select('*');
-        if(t==='audit_logs'||!['catalog_library_links','transaction_library_links','role_permissions'].includes(t))q=q.order('created_at',{ascending:false});
-        const {data,error}=await q;
-        return {t,data,error};
+
+        if(
+          t==='audit_logs' ||
+          !['catalog_library_links','transaction_library_links','role_permissions'].includes(t)
+        ){
+          q=q.order('created_at',{ascending:false});
+        }
+
+        // IMPORTANT:
+        // A Staff/RLS-restricted or slow table must never keep the entire
+        // application permanently stuck on "SYNCING ALL DATA…".
+        const result=await withDatabaseTimeout(q,t,12000);
+        return {t,data:result?.data||null,error:result?.error||null};
       }catch(error){
         return {t,data:null,error};
       }
     }));
-    // Build the next snapshot first. The visible state is replaced only after
-    // every table request in this refresh cycle has finished.
+
     const nextData={...state.data};
     const errors=[];
+
     for(const {t,data,error} of results){
       const k=key(t);
+
       if(error){
         console.warn('Database load error:',t,error);
         errors.push({table:t,error});
-        // Keep the last successful copy during a transient refresh error.
+
+        // Keep the last good copy. On a fresh login this is an empty array,
+        // which still allows the rest of the permitted pages to render.
         if(!Array.isArray(nextData[k]))nextData[k]=[];
       }else{
-        nextData[k]=data||[];
+        nextData[k]=Array.isArray(data)?data:[];
       }
     }
+
+    // Atomic snapshot commit.
     state.data=nextData;
+
     if(errors.length){
-      console.warn('Refresh completed with table errors:',errors);
-      toast(`${errors.length} database section${errors.length===1?'':'s'} could not refresh. Previous loaded data was kept where possible.`,'warning');
+      console.warn('Database refresh completed with partial errors:',errors);
     }
+
     return {errors};
   })();
+
   try{
     return await dataLoadPromise;
   }finally{
+    // Always release the lock, including Staff/RLS error cases.
     dataLoadPromise=null;
   }
 }
@@ -901,13 +1022,50 @@ function dispatchTypeRows(txid){
     </tr>`;
   }).join('')
 }
+
+function dispatchSourceLabel(check,item,txid){
+  const source=String(check?.dispatch_source||'').toLowerCase();
+  if(source==='not_in_package')return 'Extra Equipment — Not Included in Package Deal';
+  if(source==='extra_backup')return 'Extra / Backup';
+
+  const typeId=item?.equipment_type_id||check?.equipment_type_id||null;
+  const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
+  if(checklistSpecificQty(check)>0||typeReq)return 'Package / Required Equipment';
+  return 'Extra Equipment — Not Included in Package Deal';
+}
+function dispatchSourceClass(check,item,txid){
+  const label=dispatchSourceLabel(check,item,txid);
+  if(label.startsWith('Extra Equipment'))return 'not-package';
+  if(label==='Extra / Backup')return 'backup';
+  return 'package';
+}
+
 function dispatchActualRows(txid){
   const checks=state.data.checklist.filter(c=>c.transaction_id===txid);
-  if(!checks.length)return '<tr><td colspan="8">No actual equipment selected/scanned yet.</td></tr>';
-  return checks.sort((a,b)=>alpha(state.data.inventory.find(i=>i.id===a.inventory_item_id)?.name,state.data.inventory.find(i=>i.id===b.inventory_item_id)?.name)).map(c=>{
-    const item=state.data.inventory.find(i=>i.id===c.inventory_item_id);
-    return `<tr data-check-row="${c.id}"><td><strong>${esc(item?.name||'Unknown Equipment')}</strong></td><td>${esc(equipmentTypeName(item?.equipment_type_id||c.equipment_type_id))}</td><td><code>${esc(item?.asset_code||'No code')}</code></td><td>${checklistSpecificQty(c)}</td><td>${checklistTypeAllocated(c)}</td><td>${checklistOutNow(c)}</td><td>${Number(c.returned_quantity||0)}</td><td><span class="badge ${dispatchStatusClass(checklistDerivedStatus(c))}">${esc(checklistDerivedStatus(c))}</span></td></tr>`
-  }).join('')
+  if(!checks.length)return '<tr><td colspan="9">No actual equipment selected/scanned yet.</td></tr>';
+
+  return checks
+    .sort((a,b)=>alpha(
+      state.data.inventory.find(i=>i.id===a.inventory_item_id)?.name,
+      state.data.inventory.find(i=>i.id===b.inventory_item_id)?.name
+    ))
+    .map(c=>{
+      const item=state.data.inventory.find(i=>i.id===c.inventory_item_id);
+      const source=dispatchSourceLabel(c,item,txid);
+      const sourceClass=dispatchSourceClass(c,item,txid);
+
+      return `<tr data-check-row="${c.id}">
+        <td><strong>${esc(item?.name||'Unknown Equipment')}</strong></td>
+        <td>${esc(equipmentTypeName(item?.equipment_type_id||c.equipment_type_id))}</td>
+        <td><span class="dispatch-source ${sourceClass}">${esc(source)}</span></td>
+        <td><code>${esc(item?.asset_code||'No code')}</code></td>
+        <td>${checklistSpecificQty(c)}</td>
+        <td>${checklistTypeAllocated(c)}</td>
+        <td>${checklistOutNow(c)}</td>
+        <td>${Number(c.returned_quantity||0)}</td>
+        <td><span class="badge ${dispatchStatusClass(checklistDerivedStatus(c))}">${esc(checklistDerivedStatus(c))}</span></td>
+      </tr>`;
+    }).join('')
 }
 function updateDispatchModal(txid){
   const s=dispatchRequirementSummary(txid);
@@ -922,10 +1080,10 @@ function openDispatchScanner(txid){
   const tx=state.data.transactions.find(t=>t.id===txid);if(!tx)return;
   const s=dispatchRequirementSummary(txid);
   modal('Equipment Dispatch Scanner',`<div class="dispatch-event-head"><div><span class="eyebrow">${esc(tx.event_date||'')}</span><h3>${esc(tx.client_name_snapshot||'Event')}</h3><p>${esc(tx.item_name_snapshot||'')} • ${esc(tx.venue||'No venue')}</p></div></div>
-  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. Camera detection submits automatically. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
+  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. Camera detection submits automatically. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted. Equipment that is not part of the package can still be dispatched and will be recorded as Extra Equipment — Not Included in Package Deal.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
   <div class="summary-grid dispatch-summary"><div class="summary-box"><small>Total Required Qty</small><strong id="dAssigned">${s.totalRequired}</strong></div><div class="summary-box"><small>Currently Out</small><strong id="dOut">${s.out}</strong></div><div class="summary-box"><small>Returned Scans</small><strong id="dReturned">${s.returned}</strong></div><div class="summary-box"><small>Issues</small><strong id="dIssues">${s.issues}</strong></div></div>
   <h3 class="section-title">Generic Package Requirements</h3><div class="table-wrap"><table><thead><tr><th>Equipment Type</th><th>Minimum Required</th><th>Currently OUT</th><th>Extra / Backup</th><th>Actual Equipment Currently OUT</th></tr></thead><tbody id="dispatchTypeRows">${dispatchTypeRows(txid)}</tbody></table></div>
-  <h3 class="section-title">Actual Equipment / Specific Requirements</h3><div class="table-wrap"><table><thead><tr><th>Actual Equipment</th><th>Type</th><th>Scan Code</th><th>Specific Qty</th><th>Type Allocation</th><th>Out Now</th><th>Returned</th><th>Status</th></tr></thead><tbody id="dispatchRows">${dispatchActualRows(txid)}</tbody></table></div>
+  <h3 class="section-title">Actual Equipment Dispatch</h3><div class="table-wrap"><table><thead><tr><th>Actual Equipment</th><th>Type</th><th>Dispatch Category</th><th>Scan Code</th><th>Specific Qty</th><th>Type Allocation</th><th>Out Now</th><th>Returned</th><th>Status</th></tr></thead><tbody id="dispatchRows">${dispatchActualRows(txid)}</tbody></table></div>
   <div class="form-actions"><button class="btn" id="dispatchCloseBtn">Close</button></div>`,{wide:true});
   const input=$('#dispatchScanInput');let scanTimer=null,scanBusy=false,lastKeyAt=0,rapidKeys=0;
   const submitScan=async(method='scanner/manual')=>{if(scanBusy)return;const code=input.value.trim().toUpperCase();if(!code)return;scanBusy=true;input.value='';try{await processDispatchScan(txid,code,$('#scanMode').value,method)}finally{scanBusy=false;rapidKeys=0;lastKeyAt=0;setTimeout(()=>input.focus(),30)}};
@@ -974,20 +1132,14 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
 
     const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
     const hasSpecific=!!check && checklistSpecificQty(check)>0;
-
-    // Package quantity is a MINIMUM only.
-    // Allow this item if it is specifically assigned OR belongs to a required type.
-    if(!hasSpecific && !typeReq){
-      if(feedback){
-        feedback.textContent=`${item.name} is not assigned to this booking and ${equipmentTypeName(typeId)} is not a required equipment type.`;
-        feedback.className='scan-feedback error';
-      }
-      return {ok:false};
-    }
-
     const required=Number(typeReq?.required_quantity||0);
     const typeOutBefore=typeId?typeOutForTransaction(txid,typeId):0;
+    const isNotInPackage=!hasSpecific && !typeReq && String(check?.dispatch_source||'')!=='not_in_package';
+    const alreadyNotInPackage=String(check?.dispatch_source||'')==='not_in_package';
     const isExtraBackup=!!typeReq && typeOutBefore>=required;
+    const dispatchSource=(isNotInPackage||alreadyNotInPackage)
+      ? 'not_in_package'
+      : (isExtraBackup?'extra_backup':'package');
 
     if(!check){
       const {data,error}=await sb.from('transaction_checklist').insert({
@@ -1000,6 +1152,7 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
         type_allocated_quantity:1,
         out_quantity:0,
         returned_quantity:0,
+        dispatch_source:dispatchSource,
         checked_at:null,
         checked_by:null
       }).select().single();
@@ -1042,6 +1195,7 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
       assigned_quantity:nextAssigned,
       type_allocated_quantity:nextTypeAllocated,
       out_quantity:nextOut,
+      dispatch_source:dispatchSource,
       status:checklistDerivedStatus(next),
       checked_out_at:now,
       checked_out_by:state.user.id,
@@ -1059,7 +1213,7 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
     }
 
     if(feedback){
-      feedback.textContent=`OUT ✓ ${item.name}${isExtraBackup?' — EXTRA / BACKUP UNIT':''}`;
+      feedback.textContent=`OUT ✓ ${item.name}${dispatchSource==='not_in_package'?' — NOT INCLUDED IN PACKAGE DEAL':(isExtraBackup?' — EXTRA / BACKUP UNIT':'')}`;
       feedback.className='scan-feedback success';
     }
 
@@ -1072,7 +1226,9 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
       quantity:1,
       package_minimum:required,
       current_type_out_before:typeOutBefore,
+      dispatch_source:dispatchSource,
       extra_backup:isExtraBackup,
+      not_in_package:dispatchSource==='not_in_package',
       scan_method:scanMethod
     });
 
@@ -1153,21 +1309,7 @@ function dispatchMaxQtyForScan(txid,item,mode){
   }
 
   const stats=inventoryQtyStats(item);
-  const available=Math.max(0,Number(stats.available||0));
-  if(available<=0)return 0;
-
-  // Package quantities are MINIMUM requirements, not a hard cap.
-  // Once the package requirement is complete, the user may still send
-  // extra/backup units of a valid equipment type for the same booking.
-  const typeId=item.equipment_type_id||null;
-  const hasSpecificAssignment=!!check && checklistSpecificQty(check)>0;
-  const hasTypeRequirement=!!(typeId && typeRequiredForTransaction(txid,typeId));
-
-  if(!hasSpecificAssignment && !hasTypeRequirement){
-    return 0;
-  }
-
-  return available;
+  return Math.max(0,Number(stats.available||0));
 }
 function closeScanConfirmation(){
   document.getElementById('scanConfirmOverlay')?.remove();
@@ -1207,16 +1349,31 @@ function openScanConfirmation(txid,code,mode,scanMethod='scanner/manual'){
   const actionLabel=mode==='out'?'CHECK OUT':'RETURN / IN';
   const typeId=item.equipment_type_id||null;
   const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
+  const existingCheck=state.data.checklist.find(c=>c.transaction_id===txid&&c.inventory_item_id===item.id);
+  const specificQty=checklistSpecificQty(existingCheck);
   const requiredQty=Number(typeReq?.required_quantity||0);
   const currentlyOutForType=typeId?typeOutForTransaction(txid,typeId):0;
   const remainingMinimum=Math.max(0,requiredQty-currentlyOutForType);
+  const inPackage=!!typeReq||specificQty>0;
+  const isNotPackage=!inPackage;
+  const isBackup=mode==='out'&&!!typeReq&&remainingMinimum<=0;
+
+  const dispatchCategory=isNotPackage
+    ? 'Extra Equipment — Not Included in Package Deal'
+    : (isBackup?'Extra / Backup':'Package / Required Equipment');
+
   const actionQuestion=mode==='out'
     ? `Are you sure you will use this equipment?`
     : `Are you sure you are returning this equipment?`;
-  const extraNote=mode==='out'&&typeReq
-    ? (remainingMinimum>0
-        ? `Package minimum remaining for ${equipmentTypeName(typeId)}: ${remainingMinimum}. You may also assign extra/backup units.`
-        : `Package minimum for ${equipmentTypeName(typeId)} is already complete. Additional quantity will be treated as extra/backup units.`)
+
+  const extraNote=mode==='out'
+    ? (isNotPackage
+        ? `${item.name} is not included in this package deal. It will be recorded separately as extra equipment and will not change the package price.`
+        : (typeReq
+            ? (remainingMinimum>0
+                ? `Package minimum remaining for ${equipmentTypeName(typeId)}: ${remainingMinimum}.`
+                : `Package minimum for ${equipmentTypeName(typeId)} is already complete. This quantity will be treated as extra/backup.`)
+            : 'This is specifically assigned equipment for the booking.'))
     : '';
 
   overlay.innerHTML=`
@@ -1231,6 +1388,10 @@ function openScanConfirmation(txid,code,mode,scanMethod='scanner/manual'){
       </div>
 
       <div class="scan-confirm-question">${actionQuestion}</div>
+      <div class="scan-dispatch-category">
+        <small>Dispatch Category</small>
+        <strong>${esc(dispatchCategory)}</strong>
+      </div>
       ${extraNote?`<div class="scan-confirm-extra-note">${esc(extraNote)}</div>`:''}
 
       <label class="scan-confirm-qty">
@@ -1676,14 +1837,20 @@ function bindGlobal(){document.addEventListener('click',e=>{const req=permission
   btn.textContent='↻ Refreshing…';
   status('SYNCING ALL DATA…');
   try{
-    await loadAll();
+    const result=await loadAll();
     render();
-    status('DATABASE CONNECTED','connected');
-    toast('All system data refreshed together.');
+    if(result?.errors?.length){
+      status('DATABASE CONNECTED • PARTIAL SYNC','connected');
+      toast(`${result.errors.length} database section${result.errors.length===1?'':'s'} could not refresh. Other available data was updated.`,'warning');
+    }else{
+      status('DATABASE CONNECTED','connected');
+      toast('All system data refreshed together.');
+    }
   }catch(err){
     console.error(err);
-    status('REFRESH ERROR','error');
-    toast('Unable to complete the database refresh.','error');
+    status('DATABASE CONNECTED • LOAD WARNING','connected');
+    render();
+    toast('Refresh finished with a warning. Available data remains usable.','warning');
   }finally{
     refreshInProgress=false;
     btn.disabled=false;
