@@ -2568,3 +2568,71 @@ input, select, textarea, button {
     max-width: 100% !important;
   }
 }
+
+
+/* ============================================================
+   MOBILE/TABLET SIDEBAR OPEN-CLOSE FIX
+   Off-canvas by default; scrollable when open.
+   ============================================================ */
+@media (max-width: 900px) {
+  .sidebar {
+    transform: translateX(-105%) !important;
+    transition: transform .22s ease !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  .sidebar.open {
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1190;
+    background: rgba(17, 35, 54, .30);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .20s ease, visibility .20s ease;
+  }
+
+  .sidebar-backdrop.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  body.sidebar-open {
+    overflow: hidden !important;
+    touch-action: none;
+  }
+
+  body.sidebar-open .sidebar {
+    touch-action: pan-y;
+  }
+
+  .mobile-only#menuBtn,
+  #menuBtn.mobile-only {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* Desktop remains permanently visible. */
+@media (min-width: 901px) {
+  .sidebar {
+    transform: none !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+  .sidebar-backdrop {
+    display: none !important;
+  }
+  body.sidebar-open {
+    overflow: auto !important;
+  }
+}

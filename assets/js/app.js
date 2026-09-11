@@ -1122,7 +1122,35 @@ function permissionForClick(el){
   if(el.closest('#addTx,#addClient,#addCatalog,#addLib,#addInv,#addRepair,#addProduct,#addSale,#addPayment,#addExpense,#addTxCategory,#addCategoryInside,#addLibCat,#addMaster,#addInvCat'))return [m,'add'];
   if(el.closest('#quickAddBtn'))return ['bookings','add'];return null;
 }
-function bindGlobal(){document.addEventListener('click',e=>{const req=permissionForClick(e.target);if(req&&!can(req[0],req[1])){e.preventDefault();e.stopImmediatePropagation();requirePermission(req[0],req[1])}},true);$('#modalClose').onclick=closeModal;$('#modalBackdrop').onclick=e=>{if(e.target.id==='modalBackdrop')e.preventDefault()};document.addEventListener('click',e=>{if(e.target.matches('[data-close]'))closeModal();const v=e.target.closest('[data-view]');if(v){state.view=v.dataset.view;render();if(innerWidth<760)$('#sidebar').classList.remove('open')}const b=e.target.closest('[data-business]');if(b){state.business=b.dataset.business;state.view='dashboard';state.filters.transactions={year:'',month:'',category:'',payment:''};state.filters.dashboard={year:'',month:'',category:'',payment:''};state.search.transactions='';state.search.dashboard='';render()}});$('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');$('#quickAddBtn').onclick=()=>{if(requirePermission('bookings','add'))openTxForm()};$('#refreshBtn').onclick=async()=>{
+
+function isMobileSidebar(){
+  return window.matchMedia('(max-width: 900px)').matches;
+}
+function openMobileSidebar(){
+  if(!isMobileSidebar())return;
+  $('#sidebar')?.classList.add('open');
+  document.body.classList.add('sidebar-open');
+  let backdrop=$('#sidebarBackdrop');
+  if(!backdrop){
+    backdrop=document.createElement('div');
+    backdrop.id='sidebarBackdrop';
+    backdrop.className='sidebar-backdrop';
+    document.body.appendChild(backdrop);
+  }
+  backdrop.classList.add('show');
+}
+function closeMobileSidebar(){
+  $('#sidebar')?.classList.remove('open');
+  document.body.classList.remove('sidebar-open');
+  $('#sidebarBackdrop')?.classList.remove('show');
+}
+function toggleMobileSidebar(){
+  if(!isMobileSidebar())return;
+  if($('#sidebar')?.classList.contains('open'))closeMobileSidebar();
+  else openMobileSidebar();
+}
+
+function bindGlobal(){document.addEventListener('click',e=>{const req=permissionForClick(e.target);if(req&&!can(req[0],req[1])){e.preventDefault();e.stopImmediatePropagation();requirePermission(req[0],req[1])}},true);$('#modalClose').onclick=closeModal;$('#modalBackdrop').onclick=e=>{if(e.target.id==='modalBackdrop')e.preventDefault()};document.addEventListener('click',e=>{if(e.target.matches('[data-close]'))closeModal();const v=e.target.closest('[data-view]');if(v){state.view=v.dataset.view;render();if(isMobileSidebar())closeMobileSidebar()}const b=e.target.closest('[data-business]');if(b){state.business=b.dataset.business;state.view='dashboard';state.filters.transactions={year:'',month:'',category:'',payment:''};state.filters.dashboard={year:'',month:'',category:'',payment:''};state.search.transactions='';state.search.dashboard='';render()}});$('#menuBtn').onclick=()=>toggleMobileSidebar();$('#quickAddBtn').onclick=()=>{if(requirePermission('bookings','add'))openTxForm()};$('#refreshBtn').onclick=async()=>{
   if(refreshInProgress||dataLoadPromise)return;
   refreshInProgress=true;
   const btn=$('#refreshBtn');
@@ -1144,6 +1172,16 @@ function bindGlobal(){document.addEventListener('click',e=>{const req=permission
     btn.disabled=false;
     btn.textContent=oldText;
   }
-};$('#logoutBtn').onclick=()=>confirmModal('Sign Out','Sign out of the system?',async()=>{await sb.auth.signOut();location.reload()});$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginMessage').textContent='Signing in…';const {data,error}=await sb.auth.signInWithPassword({email:$('#loginEmail').value.trim(),password:$('#loginPassword').value});if(error){$('#loginMessage').textContent=error.message;return}$('#loginMessage').textContent='';await signedIn(data.user)};$('#jsonFileInput').onchange=e=>{const f=e.target.files[0];if(f)validateImport(f);e.target.value=''}}
+};$('#logoutBtn').onclick=()=>confirmModal('Sign Out','Sign out of the system?',async()=>{await sb.auth.signOut();location.reload()});$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginMessage').textContent='Signing in…';const {data,error}=await sb.auth.signInWithPassword({email:$('#loginEmail').value.trim(),password:$('#loginPassword').value});if(error){$('#loginMessage').textContent=error.message;return}$('#loginMessage').textContent='';await signedIn(data.user)};$('#jsonFileInput').onchange=e=>{const f=e.target.files[0];if(f)validateImport(f);e.target.value=''};
+  document.addEventListener('click',e=>{
+    if(e.target?.id==='sidebarBackdrop')closeMobileSidebar();
+  });
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&isMobileSidebar())closeMobileSidebar();
+  });
+  window.addEventListener('resize',()=>{
+    if(!isMobileSidebar())closeMobileSidebar();
+  });
+}
 init();
 })();
