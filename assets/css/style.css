@@ -2848,3 +2848,17 @@ input, select, textarea, button {
     font-size:20px !important;
   }
 }
+
+
+/* Extra / backup equipment scan note */
+.scan-confirm-extra-note{
+  margin:-6px 0 14px;
+  padding:10px 12px;
+  border:1px solid #f2d49b;
+  border-left:4px solid #f59e0b;
+  border-radius:8px;
+  background:#fff9ed;
+  color:#7a4d06;
+  font-size:12.5px;
+  line-height:1.45;
+}
