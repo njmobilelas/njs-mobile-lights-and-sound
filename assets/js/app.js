@@ -8,6 +8,8 @@ const money=n=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const state={business:'njs',view:'dashboard',user:null,profile:null,filters:{transactions:{year:'',month:'',category:'',payment:''},dashboard:{year:'',month:'',category:'',payment:''},clients:{year:'',month:''},payments:{year:'',month:''},expenses:{year:'',month:''},repairs:{year:'',month:''},audit:{year:'',month:''},reports:{year:'',month:''},pos:{year:'',month:''},inventory:{category:''}},search:{transactions:'',dashboard:'',clients:'',catalog:'',library:'',inventory:'',repairs:'',payments:'',expenses:'',audit:'',reports:'',categories:'',libraryCategories:'',inventoryCategories:'',transactionCategories:'',coupons:'',posProducts:'',posSales:''},data:{clients:[],categories:[],catalog:[],library:[],libraryCategories:[],inventoryCategories:[],equipmentTypes:[],transactionCategories:[],transactionLibraryLinks:[],transactions:[],charges:[],coupons:[],transactionAddons:[],transactionPackageAddons:[],payments:[],expenses:[],inventory:[],repairs:[],links:[],checklist:[],catalogInventoryLinks:[],catalogTypeRequirements:[],transactionTypeRequirements:[],audit:[],movementAudit:[],posProducts:[],posSales:[],posSaleItems:[],profiles:[],rolePermissions:[]}};
 let pendingImport=null;
+let activeQrScanner=null;
+let activeQrScannerStarting=false;
 let dataLoadPromise=null;
 let realtimeRefreshTimer=null;
 let realtimeChannel=null;
@@ -646,29 +648,53 @@ function renderDispatch(){
   $('#viewRoot').innerHTML=`<div class="panel dispatch-hero"><div><span class="eyebrow">TYPE-BASED EQUIPMENT CONTROL</span><h2>Event Equipment Check-Out & Return</h2><p class="muted">Select the booking below, then scan the actual equipment. Example: Package requires Speakers × 4, and you may scan RCF × 2 + Alto × 2.</p>${String(state.profile?.role||'').toLowerCase()==='staff'?'<div class="staff-dispatch-guide"><strong>Staff workflow:</strong> 1) Choose event • 2) CHECK OUT before leaving • 3) RETURN / IN after the event • 4) Scan every item one unit at a time.</div>':''}</div></div><div class="panel"><div class="panel-head"><div><h2>Booking Dispatch Board</h2><p class="muted">Required Qty includes generic Equipment Types plus any specific equipment/add-ons.</p></div></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Event Date</th><th>Client / Event</th><th>Package</th><th>Required Qty</th><th>Currently Out</th><th>Returned Scans</th><th>Issues</th><th>Action</th></tr></thead><tbody>${rows.map(({t,totalRequired,out,returned,issues})=>`<tr><td>${esc(t.event_date||'')}</td><td><strong>${esc(t.client_name_snapshot||'')}</strong><br><small>${esc(t.venue||'')}</small></td><td>${esc(t.item_name_snapshot||'')}</td><td>${totalRequired}</td><td>${out}</td><td>${returned}</td><td>${issues?`<span class="badge damaged">${issues}</span>`:'0'}</td><td><button class="btn primary small" data-dispatch="${t.id}">Scan Equipment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No bookings available.</div>'}</div>`;
   $$('[data-dispatch]').forEach(b=>b.onclick=()=>openDispatchScanner(b.dataset.dispatch))
 }
-async function stopMobileScanner(){if(!activeQrScanner)return;try{await activeQrScanner.stop()}catch(_){ }try{await activeQrScanner.clear()}catch(_){ }activeQrScanner=null}
+async function stopMobileScanner(){
+  const scanner=activeQrScanner;
+  activeQrScanner=null;
+  activeQrScannerStarting=false;
+  if(!scanner)return;
+  try{
+    const state=typeof scanner.getState==='function'?scanner.getState():null;
+    // html5-qrcode states 2/3 mean scanning/paused in supported versions.
+    if(state===2||state===3||state===null)await scanner.stop();
+  }catch(_){}
+  try{await scanner.clear()}catch(_){}
+}
 async function startMobileScanner(txid){
   const feedback=$('#scanFeedback'),reader=$('#mobileQrReader'),startBtn=$('#startPhoneScan');
   if(!reader||!feedback)return;
   const setFeedback=(msg,type='')=>{feedback.textContent=msg;feedback.className='scan-feedback '+type};
-  if(startBtn){startBtn.disabled=true;startBtn.textContent='📷 Starting Camera…'}
+
+  if(activeQrScannerStarting){
+    setFeedback('Camera is already starting…','warning');
+    return;
+  }
+  activeQrScannerStarting=true;
+
+  if(startBtn){
+    startBtn.disabled=true;
+    startBtn.textContent='📷 Starting Camera…';
+  }
+
   try{
     if(!window.isSecureContext){
-      throw new Error('Camera access requires HTTPS. Open the deployed GitHub Pages https:// address, not a local file or http:// link.');
+      throw new Error('Camera requires HTTPS. Open the live GitHub Pages https:// address.');
     }
     if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){
-      throw new Error('This browser does not provide camera access. Try Chrome/Edge on Android or Safari/Chrome on iPhone and allow Camera permission.');
+      throw new Error('Camera API is not available in this browser.');
     }
-    if(typeof Html5Qrcode==='undefined'){
-      throw new Error('QR scanner library did not load. Refresh the page while online, then try again.');
+    if(typeof window.Html5Qrcode==='undefined'){
+      throw new Error('QR scanner library did not load. Refresh the page while connected to the internet.');
     }
 
     await stopMobileScanner();
+    activeQrScannerStarting=true;
     reader.classList.remove('hidden');
-    setFeedback('Requesting camera permission… Please tap Allow if your phone asks.','warning');
+    reader.innerHTML='';
+    setFeedback('Requesting camera permission… Tap Allow when your phone/tablet asks.','warning');
 
-    // Ask permission from the user gesture first. This makes mobile Safari/Chrome
-    // show a clear permission prompt before html5-qrcode takes over the camera.
+    // Explicit permission request from the user's button tap.
+    // This is important for iPhone/iPad Safari and mobile Chrome.
     let permissionStream=null;
     try{
       permissionStream=await navigator.mediaDevices.getUserMedia({
@@ -676,67 +702,94 @@ async function startMobileScanner(txid){
         audio:false
       });
     }finally{
-      if(permissionStream)permissionStream.getTracks().forEach(t=>t.stop());
+      if(permissionStream)permissionStream.getTracks().forEach(track=>track.stop());
     }
 
-    activeQrScanner=new Html5Qrcode('mobileQrReader');
-
     const onDecoded=async decoded=>{
-      if(window.__scanBusy)return;
-      window.__scanBusy=true;
+      const code=String(decoded||'').trim().toUpperCase();
+      if(!code||window.__njsQrDecodeBusy)return;
+      window.__njsQrDecodeBusy=true;
       try{
-        await processDispatchScan(
-          txid,
-          String(decoded||'').trim().toUpperCase(),
-          $('#scanMode').value,
-          'phone-camera'
-        );
+        await processDispatchScan(txid,code,$('#scanMode')?.value||'out','phone-camera');
       }finally{
-        setTimeout(()=>window.__scanBusy=false,700);
+        setTimeout(()=>{window.__njsQrDecodeBusy=false},650);
       }
     };
 
-    // Prefer the rear/environment camera without needing camera labels.
+    activeQrScanner=new window.Html5Qrcode('mobileQrReader');
+
+    // First choice: facingMode works better across iPhone/iPad/Android.
     try{
       await activeQrScanner.start(
-        {facingMode:'environment'},
-        {fps:10,qrbox:(vw,vh)=>({width:Math.min(260,Math.floor(vw*.72)),height:Math.min(260,Math.floor(vh*.72))}),aspectRatio:1.0},
+        {facingMode:{exact:'environment'}},
+        {
+          fps:10,
+          qrbox:(vw,vh)=>{
+            const size=Math.max(180,Math.min(280,Math.floor(Math.min(vw,vh)*0.72)));
+            return {width:size,height:size};
+          },
+          aspectRatio:1
+        },
         onDecoded,
         ()=>{}
       );
-    }catch(primaryErr){
-      // Fallback for phones that require an explicit device id.
-      try{await activeQrScanner.clear()}catch(_){}
-      activeQrScanner=null;
-      const cameras=await Html5Qrcode.getCameras();
-      if(!cameras?.length)throw primaryErr;
-      const rear=cameras.find(c=>/back|rear|environment/i.test(c.label))||cameras[cameras.length-1];
-      activeQrScanner=new Html5Qrcode('mobileQrReader');
-      await activeQrScanner.start(
-        rear.id,
-        {fps:10,qrbox:{width:240,height:240},aspectRatio:1.0},
-        onDecoded,
-        ()=>{}
-      );
+    }catch(firstError){
+      // Some iPhones/browsers reject exact environment. Try ideal.
+      try{
+        await stopMobileScanner();
+        activeQrScannerStarting=true;
+        activeQrScanner=new window.Html5Qrcode('mobileQrReader');
+        await activeQrScanner.start(
+          {facingMode:'environment'},
+          {fps:10,qrbox:{width:240,height:240},aspectRatio:1},
+          onDecoded,
+          ()=>{}
+        );
+      }catch(secondError){
+        // Final fallback: enumerate cameras and choose rear / last camera.
+        await stopMobileScanner();
+        activeQrScannerStarting=true;
+        const cameras=await window.Html5Qrcode.getCameras();
+        if(!cameras?.length)throw secondError||firstError;
+        const rear=cameras.find(c=>/back|rear|environment|world/i.test(c.label))||cameras[cameras.length-1];
+        activeQrScanner=new window.Html5Qrcode('mobileQrReader');
+        await activeQrScanner.start(
+          rear.id,
+          {fps:10,qrbox:{width:240,height:240},aspectRatio:1},
+          onDecoded,
+          ()=>{}
+        );
+      }
     }
 
+    activeQrScannerStarting=false;
     setFeedback('Camera ready ✓ Point it at the equipment QR code.','success');
   }catch(err){
-    console.error('Phone scanner error:',err);
-    const name=err?.name||'';
-    let msg=err?.message||String(err);
+    console.error('NJS phone/tablet camera scanner error:',err);
+    activeQrScannerStarting=false;
+
+    const name=String(err?.name||'');
+    let msg=String(err?.message||err||'Unknown camera error');
+
     if(name==='NotAllowedError'||/permission|denied|notallowed/i.test(msg)){
-      msg='Camera permission was blocked. Open your browser Site Settings for this GitHub Pages site, allow Camera, then tap Scan with Phone Camera again.';
-    }else if(name==='NotFoundError'||/no camera|not found/i.test(msg)){
-      msg='No usable camera was found on this device.';
-    }else if(name==='NotReadableError'||/in use|could not start|notreadable/i.test(msg)){
-      msg='The camera is being used by another app/browser tab. Close it there, then try again.';
+      msg='Camera permission is blocked. In your browser settings for this GitHub Pages site, set Camera to Allow, then try again.';
+    }else if(name==='NotFoundError'||/no camera|not found|devicesnotfound/i.test(msg)){
+      msg='No camera was found on this phone/tablet.';
+    }else if(name==='NotReadableError'||/notreadable|in use|could not start|trackstart/i.test(msg)){
+      msg='The camera is busy or being used by another app/tab. Close the other camera app/tab and try again.';
+    }else if(/overconstrained/i.test(name+msg)){
+      msg='Rear camera selection failed. The system tried alternate cameras but none could start.';
     }
+
     setFeedback(`Camera unavailable: ${msg}`,'error');
-    await stopMobileScanner();
+    try{await stopMobileScanner()}catch(_){}
     reader.classList.add('hidden');
   }finally{
-    if(startBtn){startBtn.disabled=false;startBtn.textContent='📷 Scan with Phone Camera'}
+    activeQrScannerStarting=false;
+    if(startBtn){
+      startBtn.disabled=false;
+      startBtn.textContent='📷 Scan with Phone Camera';
+    }
   }
 }
 function dispatchTypeRows(txid){
@@ -769,7 +822,7 @@ function openDispatchScanner(txid){
   const tx=state.data.transactions.find(t=>t.id===txid);if(!tx)return;
   const s=dispatchRequirementSummary(txid);
   modal('Equipment Dispatch Scanner',`<div class="dispatch-event-head"><div><span class="eyebrow">${esc(tx.event_date||'')}</span><h3>${esc(tx.client_name_snapshot||'Event')}</h3><p>${esc(tx.item_name_snapshot||'')} • ${esc(tx.venue||'No venue')}</p></div></div>
-  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">For generic requirements, the equipment type determines where the scan is counted. Example: scanning RCF ART 715 counts toward Speakers if its Equipment Type is Speakers.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
+  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
   <div class="summary-grid dispatch-summary"><div class="summary-box"><small>Total Required Qty</small><strong id="dAssigned">${s.totalRequired}</strong></div><div class="summary-box"><small>Currently Out</small><strong id="dOut">${s.out}</strong></div><div class="summary-box"><small>Returned Scans</small><strong id="dReturned">${s.returned}</strong></div><div class="summary-box"><small>Issues</small><strong id="dIssues">${s.issues}</strong></div></div>
   <h3 class="section-title">Generic Package Requirements</h3><div class="table-wrap"><table><thead><tr><th>Equipment Type</th><th>Required</th><th>Actual Selected</th><th>Out Now</th><th>Actual Equipment Used</th></tr></thead><tbody id="dispatchTypeRows">${dispatchTypeRows(txid)}</tbody></table></div>
   <h3 class="section-title">Actual Equipment / Specific Requirements</h3><div class="table-wrap"><table><thead><tr><th>Actual Equipment</th><th>Type</th><th>Scan Code</th><th>Specific Qty</th><th>Type Allocation</th><th>Out Now</th><th>Returned</th><th>Status</th></tr></thead><tbody id="dispatchRows">${dispatchActualRows(txid)}</tbody></table></div>
