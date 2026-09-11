@@ -2752,3 +2752,99 @@ input, select, textarea, button {
     overflow-x: hidden !important;
   }
 }
+
+
+/* ============================================================
+   SCAN CONFIRMATION + QUANTITY
+   ============================================================ */
+.scan-confirm-overlay{
+  position:fixed;
+  inset:0;
+  z-index:5000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  background:rgba(15,35,55,.42);
+  backdrop-filter:blur(2px);
+}
+.scan-confirm-card{
+  width:min(460px,100%);
+  max-width:100%;
+  background:#fff;
+  border:1px solid #cbdced;
+  border-radius:16px;
+  box-shadow:0 24px 70px rgba(20,55,90,.22);
+  padding:18px;
+}
+.scan-confirm-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid #e3ebf3;
+}
+.scan-confirm-head h3{
+  margin:4px 0 3px;
+  color:#15365f;
+  font-size:20px;
+}
+.scan-confirm-head p{
+  margin:0;
+  color:#6b7f96;
+  font-size:12px;
+}
+.scan-confirm-question{
+  margin:16px 0;
+  padding:12px 14px;
+  border-left:4px solid #1261c9;
+  background:#f5f9ff;
+  border-radius:8px;
+  color:#294e74;
+  font-weight:700;
+}
+.scan-confirm-qty{
+  display:block;
+  color:#294e74;
+  font-weight:700;
+}
+.scan-confirm-qty input{
+  width:100%;
+  margin-top:6px;
+  font-size:22px;
+  font-weight:800;
+  text-align:center;
+}
+.scan-confirm-qty small{
+  display:block;
+  margin-top:6px;
+  color:#718096;
+  font-weight:500;
+}
+.scan-confirm-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:18px;
+}
+.scan-confirm-actions .btn{
+  width:100%;
+  justify-content:center;
+}
+@media(max-width:520px){
+  .scan-confirm-overlay{
+    padding:10px;
+    align-items:flex-end;
+  }
+  .scan-confirm-card{
+    border-radius:16px 16px 0 0;
+    padding:16px;
+  }
+  .scan-confirm-actions{
+    grid-template-columns:1fr;
+  }
+  .scan-confirm-qty input{
+    font-size:20px !important;
+  }
+}

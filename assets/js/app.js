@@ -863,8 +863,8 @@ function openDispatchScanner(txid){
   $('#dispatchCloseBtn').onclick=async()=>{document.removeEventListener('keydown',scannerFocusCapture,true);if(scanTimer)clearTimeout(scanTimer);await stopMobileScanner();closeModal()};
   setTimeout(()=>input.focus(),100)
 }
-async function processDispatchScan(txid,code,mode,scanMethod='scanner/manual'){
-  const feedback=$('#scanFeedback'),item=state.data.inventory.find(i=>String(i.asset_code||'').toUpperCase()===code);
+async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manual',options={}){
+  const feedback=options.silent?null:$('#scanFeedback'),item=state.data.inventory.find(i=>String(i.asset_code||'').toUpperCase()===code);
   if(!item){if(feedback){feedback.textContent=`Not found: ${code}`;feedback.className='scan-feedback error'}return}
   const now=new Date().toISOString(),typeId=item.equipment_type_id||null;
   let check=state.data.checklist.find(c=>c.transaction_id===txid&&c.inventory_item_id===item.id);
@@ -908,7 +908,207 @@ async function processDispatchScan(txid,code,mode,scanMethod='scanner/manual'){
     if(feedback){feedback.textContent=`IN ✓ ${item.name} — ${nextReturned}/${outQty} returned`;feedback.className='scan-feedback success'}
     await audit('EQUIPMENT_RETURN','transaction_checklist',check.id,{transaction_id:txid,inventory_item_id:item.id,equipment_type_id:typeId,equipment_type:equipmentTypeName(typeId),asset_code:code,quantity:1,scan_method:scanMethod})
   }
-  await loadAll();updateDispatchModal(txid);if($('#dispatchScanInput'))$('#dispatchScanInput').focus()
+  if(!options.skipRefresh){
+    await loadAll();
+    updateDispatchModal(txid);
+    if($('#dispatchScanInput'))$('#dispatchScanInput').focus();
+  }
+  return {ok:true,item};
+}
+
+
+function dispatchMaxQtyForScan(txid,item,mode){
+  const check=state.data.checklist.find(c=>c.transaction_id===txid&&c.inventory_item_id===item.id);
+  if(mode==='return'){
+    return Math.max(0,checklistOutNow(check));
+  }
+
+  const stats=inventoryQtyStats(item);
+  let maxQty=Math.max(0,Number(stats.available||0));
+  if(maxQty<=0)return 0;
+
+  const outQty=Number(check?.out_quantity||0);
+  const specificQty=checklistSpecificQty(check);
+  const specificRemaining=Math.max(0,specificQty-Math.min(specificQty,outQty));
+
+  let typeRemaining=0;
+  const typeId=item.equipment_type_id||null;
+  if(typeId){
+    const req=typeRequiredForTransaction(txid,typeId);
+    if(req){
+      typeRemaining=Math.max(
+        0,
+        Number(req.required_quantity||0)-typeAllocatedForTransaction(txid,typeId)
+      );
+    }
+  }
+
+  const requiredRemaining=specificRemaining+typeRemaining;
+  if(requiredRemaining<=0)return 0;
+  return Math.min(maxQty,requiredRemaining);
+}
+
+function closeScanConfirmation(){
+  document.getElementById('scanConfirmOverlay')?.remove();
+  const input=$('#dispatchScanInput');
+  if(input)setTimeout(()=>input.focus(),30);
+}
+
+function openScanConfirmation(txid,code,mode,scanMethod='scanner/manual'){
+  const item=state.data.inventory.find(i=>String(i.asset_code||'').toUpperCase()===String(code||'').toUpperCase());
+  const feedback=$('#scanFeedback');
+
+  if(!item){
+    if(feedback){
+      feedback.textContent=`Not found: ${code}`;
+      feedback.className='scan-feedback error';
+    }
+    return;
+  }
+
+  const maxQty=dispatchMaxQtyForScan(txid,item,mode);
+  if(maxQty<=0){
+    if(feedback){
+      feedback.textContent=mode==='return'
+        ? `No unit of ${item.name} is currently OUT for this booking.`
+        : `No remaining available/required quantity for ${item.name}.`;
+      feedback.className='scan-feedback warning';
+    }
+    return;
+  }
+
+  document.getElementById('scanConfirmOverlay')?.remove();
+
+  const overlay=document.createElement('div');
+  overlay.id='scanConfirmOverlay';
+  overlay.className='scan-confirm-overlay';
+
+  const actionLabel=mode==='out'?'CHECK OUT':'RETURN / IN';
+  const actionQuestion=mode==='out'
+    ? `Are you sure you will use this equipment?`
+    : `Are you sure you are returning this equipment?`;
+
+  overlay.innerHTML=`
+    <div class="scan-confirm-card" role="dialog" aria-modal="true">
+      <div class="scan-confirm-head">
+        <div>
+          <span class="eyebrow">${actionLabel}</span>
+          <h3>${esc(item.name)}</h3>
+          <p>${esc(equipmentTypeName(item.equipment_type_id))} • <code>${esc(item.asset_code||code)}</code></p>
+        </div>
+        <button type="button" class="icon-btn" id="scanConfirmClose" aria-label="Close">×</button>
+      </div>
+
+      <div class="scan-confirm-question">${actionQuestion}</div>
+
+      <label class="scan-confirm-qty">
+        Quantity
+        <input id="scanConfirmQty" type="number" min="1" max="${maxQty}" step="1" value="1" inputmode="numeric">
+        <small>Maximum allowed for this scan: ${maxQty}</small>
+      </label>
+
+      <div class="scan-confirm-actions">
+        <button type="button" class="btn" id="scanConfirmCancel">Cancel</button>
+        <button type="button" class="btn primary" id="scanConfirmSubmit">
+          Confirm ${mode==='out'?'OUT':'RETURN'}
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const qtyInput=$('#scanConfirmQty');
+  const submitBtn=$('#scanConfirmSubmit');
+
+  const submit=async()=>{
+    let qty=Math.floor(Number(qtyInput.value||1));
+    if(!Number.isFinite(qty)||qty<1)qty=1;
+    if(qty>maxQty){
+      qty=maxQty;
+      qtyInput.value=qty;
+      toast(`Maximum allowed quantity is ${maxQty}.`,'warning');
+      return;
+    }
+
+    submitBtn.disabled=true;
+    submitBtn.textContent='Processing…';
+
+    let completed=0;
+    let failure=null;
+
+    try{
+      for(let n=0;n<qty;n++){
+        const result=await processDispatchSingleUnit(
+          txid,
+          code,
+          mode,
+          scanMethod,
+          {silent:true,skipRefresh:true}
+        );
+        if(!result?.ok){
+          failure=result;
+          break;
+        }
+        completed++;
+        // Refresh state between units so availability / requirement counters
+        // are accurate for the next unit in the same quantity batch.
+        await loadAll();
+      }
+
+      await loadAll();
+      updateDispatchModal(txid);
+
+      if(feedback){
+        if(completed>0){
+          feedback.textContent=`${mode==='out'?'OUT':'IN'} ✓ ${item.name} × ${completed}`;
+          feedback.className='scan-feedback success';
+        }else{
+          feedback.textContent=`No quantity processed for ${item.name}.`;
+          feedback.className='scan-feedback warning';
+        }
+      }
+
+      closeScanConfirmation();
+      const input=$('#dispatchScanInput');
+      if(input){
+        input.value='';
+        input.focus();
+      }
+    }catch(err){
+      console.error('Quantity dispatch error:',err);
+      submitBtn.disabled=false;
+      submitBtn.textContent=`Confirm ${mode==='out'?'OUT':'RETURN'}`;
+      if(feedback){
+        feedback.textContent=`Unable to process ${item.name}: ${err?.message||err}`;
+        feedback.className='scan-feedback error';
+      }
+    }
+  };
+
+  $('#scanConfirmClose').onclick=closeScanConfirmation;
+  $('#scanConfirmCancel').onclick=closeScanConfirmation;
+  submitBtn.onclick=submit;
+  qtyInput.onkeydown=e=>{
+    if(e.key==='Enter'){
+      e.preventDefault();
+      submit();
+    }else if(e.key==='Escape'){
+      closeScanConfirmation();
+    }
+  };
+
+  overlay.onclick=e=>{
+    if(e.target===overlay)closeScanConfirmation();
+  };
+
+  setTimeout(()=>{
+    qtyInput.focus();
+    qtyInput.select();
+  },50);
+}
+
+async function processDispatchScan(txid,code,mode,scanMethod='scanner/manual'){
+  openScanConfirmation(txid,code,mode,scanMethod);
 }
 
 function renderMovementAudit(){if(!isMovementAuditManager()){state.view='dispatch';return renderDispatch()}head('Equipment Movement Audit','Separate tamper-resistant record of who checked equipment OUT and IN for each event.');let rows=bData('movementAudit');rows=sortByDateDesc(rows,'created_at');$('#viewRoot').innerHTML=`<div class="panel"><div class="panel-head"><div><h2>Equipment Movement Audit</h2><p class="muted">Generated automatically by the database whenever equipment status changes to OUT or RETURNED. Staff cannot edit or delete these records.</p></div><button class="btn" id="refreshMovementAudit">Refresh</button></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Date / Time</th><th>Action</th><th>Qty</th><th>User</th><th>Event</th><th>Equipment</th><th>Asset Code</th><th>Scan Method</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(new Date(x.created_at).toLocaleString())}</td><td><span class="badge ${x.action==='OUT'?'repair':'ready'}">${esc(x.action||'')}</span></td><td><strong>${Number(x.quantity||1)}</strong></td><td><strong>${esc(x.user_name||x.user_email||'Unknown User')}</strong><br><small>${esc(x.user_email||'')}</small></td><td>${esc(x.event_date||'')}<br><small>${esc(x.client_name||'')} ${x.venue?'• '+esc(x.venue):''}</small></td><td><strong>${esc(x.equipment_name||'')}</strong></td><td><code>${esc(x.asset_code||'')}</code></td><td>${esc(x.scan_method||'')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No equipment movement records yet.</div>'}</div>`;$('#refreshMovementAudit').onclick=async()=>{await loadAll();renderMovementAudit();toast('Equipment movement audit refreshed.')}}
