@@ -2636,3 +2636,119 @@ input, select, textarea, button {
     overflow: auto !important;
   }
 }
+
+
+/* ============================================================
+   DESKTOP FIXED SIDEBAR
+   Desktop: sidebar stays fixed at the left while content scrolls.
+   Mobile/tablet: keep the existing off-canvas scrollable sidebar.
+   ============================================================ */
+@media (min-width: 901px) {
+  .app-shell {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100vh !important;
+  }
+
+  .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+
+    width: 250px !important;
+    min-width: 250px !important;
+    max-width: 250px !important;
+
+    height: 100vh !important;
+    max-height: 100vh !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+
+    z-index: 1000 !important;
+    transform: none !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .main-content {
+    margin-left: 250px !important;
+    width: calc(100% - 250px) !important;
+    max-width: calc(100% - 250px) !important;
+    min-width: 0 !important;
+  }
+
+  .topbar {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 900 !important;
+  }
+
+  #mainNav {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+  }
+
+  .sidebar-bottom {
+    flex: 0 0 auto !important;
+    position: static !important;
+    margin-top: auto !important;
+  }
+
+  /* Keep every sidebar item reachable even on shorter desktop screens. */
+  .sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sidebar::-webkit-scrollbar-thumb {
+    background: #bfd0e3;
+    border-radius: 20px;
+  }
+
+  .sidebar-backdrop {
+    display: none !important;
+  }
+}
+
+/* Medium desktop / tablet-landscape widths that still count as desktop */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .sidebar {
+    width: 225px !important;
+    min-width: 225px !important;
+    max-width: 225px !important;
+  }
+
+  .main-content {
+    margin-left: 225px !important;
+    width: calc(100% - 225px) !important;
+    max-width: calc(100% - 225px) !important;
+  }
+}
+
+/* Mobile/tablet remains off-canvas and independently scrollable. */
+@media (max-width: 900px) {
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+}
