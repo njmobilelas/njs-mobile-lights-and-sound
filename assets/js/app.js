@@ -708,11 +708,37 @@ async function startMobileScanner(txid){
     const onDecoded=async decoded=>{
       const code=String(decoded||'').trim().toUpperCase();
       if(!code||window.__njsQrDecodeBusy)return;
+
+      // Prevent the camera from repeatedly submitting the same visible code.
+      const now=Date.now();
+      if(window.__njsLastCameraCode===code && (now-Number(window.__njsLastCameraAt||0))<1400)return;
+      window.__njsLastCameraCode=code;
+      window.__njsLastCameraAt=now;
       window.__njsQrDecodeBusy=true;
+
+      const scanInput=$('#dispatchScanInput');
+      if(scanInput){
+        scanInput.value=code;
+        scanInput.dispatchEvent(new Event('input',{bubbles:true}));
+      }
+
+      setFeedback(`Detected ${code} — processing automatically…`,'warning');
+
       try{
-        await processDispatchScan(txid,code,$('#scanMode')?.value||'out','phone-camera');
+        // Camera detection is equivalent to pressing Enter:
+        // immediately process the scanned asset code using the selected OUT/RETURN mode.
+        await processDispatchScan(
+          txid,
+          code,
+          $('#scanMode')?.value||'out',
+          'phone-camera'
+        );
       }finally{
-        setTimeout(()=>{window.__njsQrDecodeBusy=false},650);
+        if(scanInput){
+          scanInput.value='';
+          scanInput.focus();
+        }
+        setTimeout(()=>{window.__njsQrDecodeBusy=false},500);
       }
     };
 
@@ -822,7 +848,7 @@ function openDispatchScanner(txid){
   const tx=state.data.transactions.find(t=>t.id===txid);if(!tx)return;
   const s=dispatchRequirementSummary(txid);
   modal('Equipment Dispatch Scanner',`<div class="dispatch-event-head"><div><span class="eyebrow">${esc(tx.event_date||'')}</span><h3>${esc(tx.client_name_snapshot||'Event')}</h3><p>${esc(tx.item_name_snapshot||'')} • ${esc(tx.venue||'No venue')}</p></div></div>
-  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
+  <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. Camera detection submits automatically. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
   <div class="summary-grid dispatch-summary"><div class="summary-box"><small>Total Required Qty</small><strong id="dAssigned">${s.totalRequired}</strong></div><div class="summary-box"><small>Currently Out</small><strong id="dOut">${s.out}</strong></div><div class="summary-box"><small>Returned Scans</small><strong id="dReturned">${s.returned}</strong></div><div class="summary-box"><small>Issues</small><strong id="dIssues">${s.issues}</strong></div></div>
   <h3 class="section-title">Generic Package Requirements</h3><div class="table-wrap"><table><thead><tr><th>Equipment Type</th><th>Required</th><th>Actual Selected</th><th>Out Now</th><th>Actual Equipment Used</th></tr></thead><tbody id="dispatchTypeRows">${dispatchTypeRows(txid)}</tbody></table></div>
   <h3 class="section-title">Actual Equipment / Specific Requirements</h3><div class="table-wrap"><table><thead><tr><th>Actual Equipment</th><th>Type</th><th>Scan Code</th><th>Specific Qty</th><th>Type Allocation</th><th>Out Now</th><th>Returned</th><th>Status</th></tr></thead><tbody id="dispatchRows">${dispatchActualRows(txid)}</tbody></table></div>
