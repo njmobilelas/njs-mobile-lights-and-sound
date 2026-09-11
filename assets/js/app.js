@@ -14,10 +14,30 @@ let realtimeChannel=null;
 let refreshInProgress=false;
 const nav={njs:[['dashboard','Dashboard'],['bookings','Event Bookings'],['clients','Clients'],['catalog','Service Packages'],['coupons','Coupons & Vouchers'],['library','Package Inclusions'],['inventory','Equipment'],['dispatch','Equipment Dispatch'],['movement-audit','Equipment Movement Audit'],['repairs','Repairs & Maintenance'],['pos','Mini POS'],['payments','Payments'],['expenses','Expenses'],['reports','Reports']]};
 function toast(msg,type='success'){const d=document.createElement('div');d.className='toast '+type;d.textContent=msg;$('#toastHost').appendChild(d);setTimeout(()=>d.remove(),3500)}
-function modal(title,html,{wide=false}={}){$('#modalTitle').textContent=title;$('#modalBody').innerHTML=html;$('.modal').classList.toggle('wide',wide);$('#modalBackdrop').classList.remove('hidden')}
+function modal(title,html,{wide=false}={}){$('#modalTitle').textContent=title;$('#modalBody').innerHTML=html;$('.modal').classList.toggle('wide',wide);$('#modalBackdrop').classList.remove('hidden');requestAnimationFrame(()=>prepareResponsiveTables($('#modalBody')))}
 function closeModal(){if(typeof stopMobileScanner==='function')stopMobileScanner();$('#modalBackdrop').classList.add('hidden');$('#modalBody').innerHTML=''}
 function confirmModal(title,message,onYes){modal(title,`<p>${esc(message)}</p><div class="form-actions"><button class="btn" data-close>Cancel</button><button class="btn danger" id="modalConfirmYes">Continue</button></div>`);$('#modalConfirmYes').onclick=async()=>{closeModal();await onYes()}}
 function status(text,type=''){$('#modePill').textContent=text;$('#modePill').className='mode-pill '+type}
+function prepareResponsiveTables(root=document){
+  root.querySelectorAll?.('table').forEach(table=>{
+    const headers=[...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+    if(!headers.length)return;
+    table.querySelectorAll('tbody tr').forEach(tr=>{
+      [...tr.children].forEach((cell,i)=>{
+        if(cell.tagName==='TD'&&!cell.dataset.label)cell.dataset.label=headers[i]||'';
+      });
+    });
+  });
+}
+let responsiveTableObserver=null;
+function installResponsiveTableObserver(){
+  if(responsiveTableObserver)return;
+  const apply=()=>prepareResponsiveTables(document);
+  responsiveTableObserver=new MutationObserver(()=>requestAnimationFrame(apply));
+  const root=document.body;
+  if(root)responsiveTableObserver.observe(root,{childList:true,subtree:true});
+  requestAnimationFrame(apply);
+}
 function businessName(){return "NJ's Mobile Lights and Sound"}
 function logoAssetUrl(){return new URL("assets/images/logo.png", window.location.href).href}
 const permissionModules=[
@@ -36,6 +56,24 @@ function can(module,action='view'){
   const idx={view:0,add:1,edit:2,delete:3}[action]??0;
   return !!defaultPermissions[roleName()]?.[module]?.[idx];
 }
+function firstAllowedView(){
+  const preferred=['dispatch','bookings','inventory','clients','catalog','dashboard','pos','payments','expenses','reports'];
+  for(const v of preferred){
+    const perm=VIEW_PERMISSION_MAP?.[v];
+    if(!perm || can(perm[0],perm[1]||'view'))return v;
+  }
+  return 'dashboard';
+}
+function defaultLandingView(){
+  const role=String(state.profile?.role||'').toLowerCase();
+  if(role==='staff'){
+    const dispatchPerm=VIEW_PERMISSION_MAP?.dispatch;
+    if(!dispatchPerm || can(dispatchPerm[0],dispatchPerm[1]||'view'))return 'dispatch';
+    return firstAllowedView();
+  }
+  return 'dashboard';
+}
+
 function isMovementAuditManager(){return can('movement-audit','view')}
 function requirePermission(module,action='view'){if(can(module,action))return true;toast(`Access denied: ${action.toUpperCase()} permission is required for ${permissionModules.find(x=>x[0]===module)?.[1]||module}.`,'error');return false}
 function moduleForView(v){return v==='categories'?'catalog':v}
@@ -114,7 +152,7 @@ function printerOptions(selected,eventDate,currentTxId=null){return printerItems
 function printerName(t){return state.data.inventory.find(i=>i.id===t?.printer_id)?.name||'—'}
 
 async function audit(action,module,record_id,details={}){if(!sb||!state.user)return;await sb.from('audit_logs').insert({user_id:state.user.id,user_email:state.user.email,business_code:state.business==='owner'?null:state.business,action,module,record_id:String(record_id||''),details})}
-async function init(){bindGlobal();if(!configured){status('NOT CONFIGURED','error');$('#loginScreen').classList.remove('hidden');$('#loginMessage').textContent='Add your Supabase Project URL and anon/publishable key in assets/js/config.js.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('#loginScreen').classList.remove('hidden');status('LOGIN REQUIRED','error');return}await signedIn(session.user)}
+async function init(){bindGlobal();installResponsiveTableObserver();if(!configured){status('NOT CONFIGURED','error');$('#loginScreen').classList.remove('hidden');$('#loginMessage').textContent='Add your Supabase Project URL and anon/publishable key in assets/js/config.js.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('#loginScreen').classList.remove('hidden');status('LOGIN REQUIRED','error');return}await signedIn(session.user)}
 async function signedIn(user){
   state.user=user;
   $('#loginScreen').classList.add('hidden');
@@ -124,6 +162,7 @@ async function signedIn(user){
   const profileResult=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
   state.profile=profileResult.data||{role:'staff',full_name:user.email};
   await loadAll();
+  state.view=defaultLandingView();
   renderNav();
   status('DATABASE CONNECTED','connected');
   render();
@@ -184,7 +223,7 @@ function renderNav(){
 function render(){
   if(!can(moduleForView(state.view),'view'))state.view=can('dashboard','view')?'dashboard':nav.njs.find(([v])=>can(moduleForView(v),'view'))?.[0]||'dashboard';
   renderNav();const map={dashboard:renderDashboard,bookings:renderTransactions,clients:renderClients,catalog:renderCatalog,categories:renderCategories,coupons:renderCoupons,library:renderLibrary,inventory:renderInventory,dispatch:renderDispatch,'movement-audit':renderMovementAudit,repairs:renderRepairs,payments:renderPayments,expenses:renderExpenses,pos:renderPos,reports:renderReports,audit:renderAudit,backup:renderBackup,settings:renderSettings,access:renderAccess};
-  (map[state.view]||renderDashboard)();applyActionPermissions();
+  (map[state.view]||renderDashboard)();applyActionPermissions();requestAnimationFrame(()=>prepareResponsiveTables($('#viewRoot')));
 }
 function head(title,sub){$('#pageTitle').textContent=title;$('#pageSubtitle').textContent=sub||''}
 function renderDashboard(){
@@ -601,23 +640,104 @@ function dispatchRequirementSummary(txid){
   return {reqs,checks,genericRequired,specificRequired,totalRequired:genericRequired+specificRequired,out:checks.reduce((s,c)=>s+checklistOutNow(c),0),returned:checks.reduce((s,c)=>s+Number(c.returned_quantity||0),0),issues:checks.reduce((s,c)=>s+Number(c.damaged_quantity||0)+Number(c.missing_quantity||0),0)}
 }
 function renderDispatch(){
-  head('Equipment Dispatch','Packages request generic equipment types; scan the actual brand/model you decide to bring.');
+  head('Equipment Dispatch',String(state.profile?.role||'').toLowerCase()==='staff'?'Select a booking/event, then scan equipment OUT or RETURN using phone QR, barcode scanner, or manual code.':'Packages request generic equipment types; scan the actual brand/model you decide to bring.');
   const bookings=bData('transactions').filter(t=>t.status!=='Cancelled').sort((a,b)=>String(a.event_date||'').localeCompare(String(b.event_date||'')));
   const rows=bookings.map(t=>({t,...dispatchRequirementSummary(t.id)}));
-  $('#viewRoot').innerHTML=`<div class="panel dispatch-hero"><div><span class="eyebrow">TYPE-BASED EQUIPMENT CONTROL</span><h2>Event Equipment Check-Out & Return</h2><p class="muted">Example: Package requires Speakers × 4. You can scan RCF × 2 + Alto × 2. The system records the exact equipment that actually left and returned.</p></div></div><div class="panel"><div class="panel-head"><div><h2>Booking Dispatch Board</h2><p class="muted">Required Qty includes generic Equipment Types plus any specific equipment/add-ons.</p></div></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Event Date</th><th>Client / Event</th><th>Package</th><th>Required Qty</th><th>Currently Out</th><th>Returned Scans</th><th>Issues</th><th>Action</th></tr></thead><tbody>${rows.map(({t,totalRequired,out,returned,issues})=>`<tr><td>${esc(t.event_date||'')}</td><td><strong>${esc(t.client_name_snapshot||'')}</strong><br><small>${esc(t.venue||'')}</small></td><td>${esc(t.item_name_snapshot||'')}</td><td>${totalRequired}</td><td>${out}</td><td>${returned}</td><td>${issues?`<span class="badge damaged">${issues}</span>`:'0'}</td><td><button class="btn primary small" data-dispatch="${t.id}">Scan Equipment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No bookings available.</div>'}</div>`;
+  $('#viewRoot').innerHTML=`<div class="panel dispatch-hero"><div><span class="eyebrow">TYPE-BASED EQUIPMENT CONTROL</span><h2>Event Equipment Check-Out & Return</h2><p class="muted">Select the booking below, then scan the actual equipment. Example: Package requires Speakers × 4, and you may scan RCF × 2 + Alto × 2.</p>${String(state.profile?.role||'').toLowerCase()==='staff'?'<div class="staff-dispatch-guide"><strong>Staff workflow:</strong> 1) Choose event • 2) CHECK OUT before leaving • 3) RETURN / IN after the event • 4) Scan every item one unit at a time.</div>':''}</div></div><div class="panel"><div class="panel-head"><div><h2>Booking Dispatch Board</h2><p class="muted">Required Qty includes generic Equipment Types plus any specific equipment/add-ons.</p></div></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Event Date</th><th>Client / Event</th><th>Package</th><th>Required Qty</th><th>Currently Out</th><th>Returned Scans</th><th>Issues</th><th>Action</th></tr></thead><tbody>${rows.map(({t,totalRequired,out,returned,issues})=>`<tr><td>${esc(t.event_date||'')}</td><td><strong>${esc(t.client_name_snapshot||'')}</strong><br><small>${esc(t.venue||'')}</small></td><td>${esc(t.item_name_snapshot||'')}</td><td>${totalRequired}</td><td>${out}</td><td>${returned}</td><td>${issues?`<span class="badge damaged">${issues}</span>`:'0'}</td><td><button class="btn primary small" data-dispatch="${t.id}">Scan Equipment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No bookings available.</div>'}</div>`;
   $$('[data-dispatch]').forEach(b=>b.onclick=()=>openDispatchScanner(b.dataset.dispatch))
 }
 async function stopMobileScanner(){if(!activeQrScanner)return;try{await activeQrScanner.stop()}catch(_){ }try{await activeQrScanner.clear()}catch(_){ }activeQrScanner=null}
 async function startMobileScanner(txid){
-  const feedback=$('#scanFeedback'),reader=$('#mobileQrReader');if(!reader)return;
-  if(typeof Html5Qrcode==='undefined'){feedback.textContent='Camera scanner library did not load. Check your internet connection or use the manual/barcode scanner field.';feedback.className='scan-feedback error';return}
-  await stopMobileScanner();reader.classList.remove('hidden');feedback.textContent='Starting phone camera…';feedback.className='scan-feedback';
+  const feedback=$('#scanFeedback'),reader=$('#mobileQrReader'),startBtn=$('#startPhoneScan');
+  if(!reader||!feedback)return;
+  const setFeedback=(msg,type='')=>{feedback.textContent=msg;feedback.className='scan-feedback '+type};
+  if(startBtn){startBtn.disabled=true;startBtn.textContent='📷 Starting Camera…'}
   try{
-    activeQrScanner=new Html5Qrcode('mobileQrReader');const cameras=await Html5Qrcode.getCameras();if(!cameras?.length)throw new Error('No camera found.');
-    const rear=cameras.find(c=>/back|rear|environment/i.test(c.label))||cameras[cameras.length-1];
-    await activeQrScanner.start(rear.id,{fps:10,qrbox:{width:240,height:240},aspectRatio:1.0},async decoded=>{if(window.__scanBusy)return;window.__scanBusy=true;try{await processDispatchScan(txid,String(decoded||'').trim().toUpperCase(),$('#scanMode').value,'phone-camera')}finally{setTimeout(()=>window.__scanBusy=false,800)}},()=>{});
-    feedback.textContent='Phone camera ready. Point it at the equipment QR code.';feedback.className='scan-feedback success'
-  }catch(err){feedback.textContent=`Camera unavailable: ${err?.message||err}`;feedback.className='scan-feedback error';await stopMobileScanner()}
+    if(!window.isSecureContext){
+      throw new Error('Camera access requires HTTPS. Open the deployed GitHub Pages https:// address, not a local file or http:// link.');
+    }
+    if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){
+      throw new Error('This browser does not provide camera access. Try Chrome/Edge on Android or Safari/Chrome on iPhone and allow Camera permission.');
+    }
+    if(typeof Html5Qrcode==='undefined'){
+      throw new Error('QR scanner library did not load. Refresh the page while online, then try again.');
+    }
+
+    await stopMobileScanner();
+    reader.classList.remove('hidden');
+    setFeedback('Requesting camera permission… Please tap Allow if your phone asks.','warning');
+
+    // Ask permission from the user gesture first. This makes mobile Safari/Chrome
+    // show a clear permission prompt before html5-qrcode takes over the camera.
+    let permissionStream=null;
+    try{
+      permissionStream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:{ideal:'environment'}},
+        audio:false
+      });
+    }finally{
+      if(permissionStream)permissionStream.getTracks().forEach(t=>t.stop());
+    }
+
+    activeQrScanner=new Html5Qrcode('mobileQrReader');
+
+    const onDecoded=async decoded=>{
+      if(window.__scanBusy)return;
+      window.__scanBusy=true;
+      try{
+        await processDispatchScan(
+          txid,
+          String(decoded||'').trim().toUpperCase(),
+          $('#scanMode').value,
+          'phone-camera'
+        );
+      }finally{
+        setTimeout(()=>window.__scanBusy=false,700);
+      }
+    };
+
+    // Prefer the rear/environment camera without needing camera labels.
+    try{
+      await activeQrScanner.start(
+        {facingMode:'environment'},
+        {fps:10,qrbox:(vw,vh)=>({width:Math.min(260,Math.floor(vw*.72)),height:Math.min(260,Math.floor(vh*.72))}),aspectRatio:1.0},
+        onDecoded,
+        ()=>{}
+      );
+    }catch(primaryErr){
+      // Fallback for phones that require an explicit device id.
+      try{await activeQrScanner.clear()}catch(_){}
+      activeQrScanner=null;
+      const cameras=await Html5Qrcode.getCameras();
+      if(!cameras?.length)throw primaryErr;
+      const rear=cameras.find(c=>/back|rear|environment/i.test(c.label))||cameras[cameras.length-1];
+      activeQrScanner=new Html5Qrcode('mobileQrReader');
+      await activeQrScanner.start(
+        rear.id,
+        {fps:10,qrbox:{width:240,height:240},aspectRatio:1.0},
+        onDecoded,
+        ()=>{}
+      );
+    }
+
+    setFeedback('Camera ready ✓ Point it at the equipment QR code.','success');
+  }catch(err){
+    console.error('Phone scanner error:',err);
+    const name=err?.name||'';
+    let msg=err?.message||String(err);
+    if(name==='NotAllowedError'||/permission|denied|notallowed/i.test(msg)){
+      msg='Camera permission was blocked. Open your browser Site Settings for this GitHub Pages site, allow Camera, then tap Scan with Phone Camera again.';
+    }else if(name==='NotFoundError'||/no camera|not found/i.test(msg)){
+      msg='No usable camera was found on this device.';
+    }else if(name==='NotReadableError'||/in use|could not start|notreadable/i.test(msg)){
+      msg='The camera is being used by another app/browser tab. Close it there, then try again.';
+    }
+    setFeedback(`Camera unavailable: ${msg}`,'error');
+    await stopMobileScanner();
+    reader.classList.add('hidden');
+  }finally{
+    if(startBtn){startBtn.disabled=false;startBtn.textContent='📷 Scan with Phone Camera'}
+  }
 }
 function dispatchTypeRows(txid){
   const reqs=state.data.transactionTypeRequirements.filter(r=>r.transaction_id===txid).sort((a,b)=>alpha(equipmentTypeName(a.equipment_type_id),equipmentTypeName(b.equipment_type_id)));
@@ -659,7 +779,8 @@ function openDispatchScanner(txid){
   input.onkeydown=async e=>{if(e.key==='Enter'){e.preventDefault();if(scanTimer){clearTimeout(scanTimer);scanTimer=null}await submitScan(rapidKeys>=3?'physical-barcode-scanner':'scanner/manual');return}const now=Date.now();if(e.key.length===1){rapidKeys=(now-lastKeyAt<80)?rapidKeys+1:1;lastKeyAt=now;if(scanTimer)clearTimeout(scanTimer);scanTimer=setTimeout(()=>{if(input.value.trim().length>=3&&rapidKeys>=3)submitScan('physical-barcode-scanner')},180)}};
   const scannerFocusCapture=e=>{if($('#modalBackdrop')?.classList.contains('hidden')||!$('#dispatchScanInput'))return;const tag=String(e.target?.tagName||'').toLowerCase();const editable=e.target?.isContentEditable||['input','textarea','select'].includes(tag);if(!editable&&e.key&&e.key.length===1){input.focus();input.value='';rapidKeys=0;lastKeyAt=0}};
   document.addEventListener('keydown',scannerFocusCapture,true);
-  $('#startPhoneScan').onclick=()=>startMobileScanner(txid);$('#stopPhoneScan').onclick=()=>stopMobileScanner();
+  $('#startPhoneScan').onclick=async()=>{const f=$('#scanFeedback');if(f){f.textContent='Opening phone camera…';f.className='scan-feedback warning'}await startMobileScanner(txid)};
+  $('#stopPhoneScan').onclick=async()=>{await stopMobileScanner();$('#mobileQrReader')?.classList.add('hidden');const f=$('#scanFeedback');if(f){f.textContent='Camera stopped. USB/Bluetooth scanner or manual code input is still ready.';f.className='scan-feedback'}};
   $('#dispatchCloseBtn').onclick=async()=>{document.removeEventListener('keydown',scannerFocusCapture,true);if(scanTimer)clearTimeout(scanTimer);await stopMobileScanner();closeModal()};
   setTimeout(()=>input.focus(),100)
 }
