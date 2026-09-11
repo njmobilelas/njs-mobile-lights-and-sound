@@ -59,21 +59,43 @@ function can(module,action='view'){
   return !!defaultPermissions[roleName()]?.[module]?.[idx];
 }
 function firstAllowedView(){
-  const preferred=['dispatch','bookings','inventory','clients','catalog','dashboard','pos','payments','expenses','reports'];
-  for(const v of preferred){
-    const perm=VIEW_PERMISSION_MAP?.[v];
-    if(!perm || can(perm[0],perm[1]||'view'))return v;
+  const preferred=[
+    'dispatch',
+    'bookings',
+    'inventory',
+    'clients',
+    'catalog',
+    'dashboard',
+    'pos',
+    'payments',
+    'expenses',
+    'reports',
+    'repairs',
+    'coupons',
+    'library'
+  ];
+
+  for(const view of preferred){
+    const module=moduleForView(view);
+    if(can(module,'view'))return view;
   }
+
   return 'dashboard';
 }
+
 function defaultLandingView(){
-  const role=String(state.profile?.role||'').toLowerCase();
+  const role=String(state.profile?.role||'staff').toLowerCase();
+
+  // Staff starts on Equipment Dispatch when permitted.
   if(role==='staff'){
-    const dispatchPerm=VIEW_PERMISSION_MAP?.dispatch;
-    if(!dispatchPerm || can(dispatchPerm[0],dispatchPerm[1]||'view'))return 'dispatch';
+    if(can('dispatch','view'))return 'dispatch';
     return firstAllowedView();
   }
-  return 'dashboard';
+
+  // Owner / Administrator / Viewer:
+  // keep Dashboard when allowed, otherwise use first allowed page.
+  if(can('dashboard','view'))return 'dashboard';
+  return firstAllowedView();
 }
 
 function isMovementAuditManager(){return can('movement-audit','view')}
@@ -188,6 +210,8 @@ async function signedIn(user){
       full_name:user.email
     };
 
+    status(`LOADING ${String(state.profile.role||'USER').toUpperCase()} DATA…`);
+
     const loadResult=await loadAll();
 
     // role_permissions is now loaded (or safely timed out). can() also has
@@ -212,9 +236,23 @@ async function signedIn(user){
     console.error('Initial system load failed:',err);
 
     // Never leave a logged-in user permanently on the loading screen.
-    state.view=defaultLandingView();
-    renderNav();
-    render();
+    try{
+      state.view=defaultLandingView();
+    }catch(landingErr){
+      console.error('Landing page selection failed:',landingErr);
+      state.view=can('dashboard','view')?'dashboard':firstAllowedView();
+    }
+
+    try{renderNav()}catch(navErr){console.error('Navigation render warning:',navErr)}
+    try{render()}catch(renderErr){
+      console.error('Fallback render warning:',renderErr);
+      head('System','Available data loaded with a warning.');
+      $('#viewRoot').innerHTML=`
+        <div class="panel">
+          <h2>System Ready</h2>
+          <p class="muted">Some data could not finish loading. Use Refresh to retry.</p>
+        </div>`;
+    }
 
     status('DATABASE CONNECTED • LOAD WARNING','connected');
     toast('The system opened with available data. Use Refresh if a section is still missing.','warning');
