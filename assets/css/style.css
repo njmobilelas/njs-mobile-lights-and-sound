@@ -1931,3 +1931,640 @@ code {
     max-width: 100% !important;
   }
 }
+
+
+/* ============================================================
+   MOBILE SIDEBAR FIX
+   Prevent menu overlap; sidebar scrolls vertically by itself.
+   ============================================================ */
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    width: min(86vw, 340px) !important;
+    max-width: min(86vw, 340px) !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+
+    padding: 12px 14px 18px !important;
+    background: #eef6ff !important;
+    border-right: 1px solid #cbdced !important;
+    z-index: 1200 !important;
+  }
+
+  .sidebar .brand {
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    margin: 0 0 10px !important;
+    padding: 0 0 12px !important;
+  }
+
+  .sidebar .brand-logo-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 100px !important;
+    height: auto !important;
+    padding: 8px !important;
+  }
+
+  .sidebar .brand-logo {
+    width: 100% !important;
+    max-height: 88px !important;
+    height: auto !important;
+    object-fit: contain !important;
+  }
+
+  .sidebar .brand-copy {
+    width: 100% !important;
+    text-align: center !important;
+    padding: 0 4px !important;
+  }
+
+  .sidebar .brand-copy strong {
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+    margin-top: 8px !important;
+  }
+
+  .sidebar .brand-copy small {
+    display: block !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    margin-top: 3px !important;
+  }
+
+  #mainNav {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 6px 0 10px !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  .sidebar-bottom {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    width: 100% !important;
+    margin: 6px 0 0 !important;
+    padding: 10px 0 8px !important;
+    border-top: 1px solid #d3e0ee !important;
+    position: static !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    background: transparent !important;
+  }
+
+  .sidebar .nav-btn,
+  #mainNav .nav-btn,
+  .sidebar-bottom .nav-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+
+    position: relative !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 44px !important;
+    height: auto !important;
+
+    margin: 0 !important;
+    padding: 10px 12px !important;
+
+    font-size: 14px !important;
+    line-height: 1.25 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+
+    border-radius: 10px !important;
+  }
+
+  .sidebar .nav-btn + .nav-btn,
+  #mainNav .nav-btn + .nav-btn,
+  .sidebar-bottom .nav-btn + .nav-btn {
+    margin-top: 0 !important;
+  }
+
+  .sidebar .nav-btn.active {
+    padding-left: 14px !important;
+  }
+
+  /* Keep last controls reachable above Safari/browser bars. */
+  .sidebar-bottom::after {
+    content: "";
+    display: block;
+    flex: 0 0 env(safe-area-inset-bottom);
+    height: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .sidebar::-webkit-scrollbar {
+    width: 5px;
+  }
+  .sidebar::-webkit-scrollbar-thumb {
+    background: #bfd0e3;
+    border-radius: 20px;
+  }
+}
+
+/* Compact phone tuning */
+@media (max-width: 520px) {
+  .sidebar {
+    width: min(88vw, 330px) !important;
+    max-width: min(88vw, 330px) !important;
+    padding: 10px 12px 16px !important;
+  }
+
+  .sidebar .brand-logo-panel {
+    min-height: 86px !important;
+  }
+
+  .sidebar .brand-logo {
+    max-height: 76px !important;
+  }
+
+  .sidebar .brand-copy strong {
+    font-size: 14px !important;
+  }
+
+  .sidebar .brand-copy small {
+    font-size: 10px !important;
+  }
+
+  .sidebar .nav-btn,
+  #mainNav .nav-btn,
+  .sidebar-bottom .nav-btn {
+    min-height: 42px !important;
+    padding: 9px 11px !important;
+    font-size: 13.5px !important;
+  }
+}
+
+
+/* ============================================================
+   FINAL MOBILE + TABLET RESPONSIVE PASS
+   Covers phones, small tablets, iPad portrait/landscape,
+   and medium-width screens. Vertical scrolling only.
+   ============================================================ */
+
+/* Global containment */
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
+.app-shell,
+.main-content,
+.view-root,
+.topbar,
+.panel,
+.card,
+.summary-box,
+.modal,
+.modal-body,
+.form-grid,
+.stack-form,
+.toolbar,
+.table-wrap,
+.scanner-console,
+.dispatch-event-head,
+.report-filter-panel,
+.report-hero {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+img, svg, canvas, video {
+  max-width: 100%;
+  height: auto;
+}
+input, select, textarea, button {
+  max-width: 100%;
+}
+
+/* -----------------------------
+   TABLET LANDSCAPE / SMALL LAPTOP
+   901px - 1180px
+   ----------------------------- */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .sidebar {
+    width: 235px !important;
+    min-width: 235px !important;
+    max-width: 235px !important;
+    padding: 14px 12px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  .main-content {
+    margin-left: 235px !important;
+    width: calc(100% - 235px) !important;
+    max-width: calc(100% - 235px) !important;
+  }
+
+  .brand-logo-panel {
+    max-width: 100% !important;
+    min-height: 86px !important;
+  }
+  .brand-logo {
+    max-height: 76px !important;
+  }
+  .brand-copy strong {
+    font-size: 13.5px !important;
+  }
+  .brand-copy small {
+    font-size: 10px !important;
+  }
+
+  #mainNav .nav-btn,
+  .sidebar-bottom .nav-btn {
+    min-height: 40px !important;
+    padding: 8px 10px !important;
+    font-size: 12.5px !important;
+    line-height: 1.25 !important;
+    white-space: normal !important;
+  }
+
+  .view-root {
+    padding: 16px !important;
+  }
+  .topbar {
+    padding: 13px 16px !important;
+    gap: 12px !important;
+  }
+  .topbar-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: flex-end !important;
+    gap: 7px !important;
+  }
+
+  .cards,
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+  }
+
+  .dashboard-columns,
+  .split {
+    grid-template-columns: 1fr !important;
+  }
+
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+  }
+  .form-grid .full {
+    grid-column: 1 / -1 !important;
+  }
+
+  .equipment-grid,
+  #packageTypeGrid,
+  #packageEquipmentGrid {
+    grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+  }
+
+  .toolbar {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    align-items: end !important;
+  }
+  .toolbar > * {
+    min-width: 150px;
+    max-width: 100%;
+  }
+
+  .modal,
+  .modal.wide {
+    width: min(96vw, 1080px) !important;
+    max-width: 96vw !important;
+    max-height: 94vh !important;
+  }
+  .modal-body {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  /* Tables remain tables on wider tablets, but fit the viewport. */
+  .table-wrap {
+    width: 100% !important;
+    overflow-x: auto !important;
+    max-width: 100% !important;
+  }
+  .table-wrap table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+  .table-wrap th,
+  .table-wrap td {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    font-size: 11.5px !important;
+    padding: 8px 7px !important;
+  }
+  .table-wrap .btn.small {
+    padding: 6px 7px !important;
+    font-size: 11px !important;
+  }
+
+  .scanner-console,
+  .mobile-qr-reader {
+    width: 100% !important;
+  }
+}
+
+/* -----------------------------
+   TABLET PORTRAIT + LARGE PHONE
+   <= 900px
+   ----------------------------- */
+@media (max-width: 900px) {
+  .app-shell {
+    display: block !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .view-root {
+    width: 100% !important;
+    padding: 10px !important;
+  }
+
+  .topbar {
+    width: 100% !important;
+    padding: 10px !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 9px !important;
+  }
+
+  .topbar-copy,
+  .topbar-actions {
+    width: 100% !important;
+  }
+
+  .topbar-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    gap: 8px !important;
+  }
+  .topbar-actions .mode-pill {
+    grid-column: 1 / -1;
+    width: 100%;
+    text-align: center;
+  }
+  .topbar-actions .btn {
+    width: 100%;
+  }
+
+  .panel-head,
+  .report-hero,
+  .dispatch-event-head {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .cards,
+  .summary-grid,
+  .dashboard-columns,
+  .split,
+  .form-grid,
+  .check-grid,
+  .equipment-grid,
+  #packageTypeGrid,
+  #packageEquipmentGrid,
+  .backup-grid,
+  .settings-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .toolbar,
+  .form-actions,
+  .mobile-scan-actions,
+  .inline-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2,minmax(0,1fr)) !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .toolbar > label,
+  .toolbar > .table-search,
+  .toolbar > .table-filters,
+  .toolbar > .tx-filters {
+    grid-column: 1 / -1;
+    width: 100% !important;
+  }
+  .toolbar .btn,
+  .form-actions .btn,
+  .mobile-scan-actions .btn,
+  .inline-actions .btn {
+    width: 100% !important;
+    min-width: 0 !important;
+    white-space: normal !important;
+  }
+
+  .line-row,
+  .payment-row,
+  .addon-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Card-style tables: no horizontal scrolling. */
+  .table-wrap {
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+    width: 100% !important;
+  }
+  .table-wrap table,
+  table.permission-table {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .table-wrap thead,
+  table.permission-table thead {
+    display: none !important;
+  }
+  .table-wrap tbody,
+  table.permission-table tbody {
+    display: grid !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+  .table-wrap tbody tr,
+  table.permission-table tbody tr {
+    display: block !important;
+    width: 100% !important;
+    padding: 9px 10px !important;
+    border: 1px solid #d6e3f1 !important;
+    border-radius: 11px !important;
+    background: #fff !important;
+  }
+  .table-wrap tbody td,
+  table.permission-table tbody td {
+    display: grid !important;
+    grid-template-columns: minmax(110px,34%) minmax(0,1fr) !important;
+    gap: 9px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    padding: 8px 2px !important;
+    border: 0 !important;
+    border-bottom: 1px solid #edf2f7 !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word;
+    text-align: left !important;
+  }
+  .table-wrap tbody td:last-child {
+    border-bottom: 0 !important;
+  }
+  .table-wrap tbody td::before,
+  table.permission-table tbody td::before {
+    content: attr(data-label);
+    font-size: 10px;
+    font-weight: 800;
+    color: #667d96;
+    text-transform: uppercase;
+    letter-spacing: .035em;
+  }
+  .table-wrap tbody td[data-label="Actions"],
+  .table-wrap tbody td[data-label="Action"] {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .table-wrap tbody td[data-label="Actions"]::before,
+  .table-wrap tbody td[data-label="Action"]::before {
+    flex: 0 0 100%;
+  }
+  .table-wrap tbody td[data-label="Actions"] .btn,
+  .table-wrap tbody td[data-label="Action"] .btn {
+    flex: 1 1 120px;
+    width: auto !important;
+  }
+
+  /* Modal fills screen cleanly on tablet portrait */
+  .modal-backdrop {
+    padding: 0 !important;
+    align-items: stretch !important;
+  }
+  .modal,
+  .modal.wide {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+  .modal-head {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 20 !important;
+    background: #fff !important;
+  }
+  .modal-body {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 12px !important;
+  }
+
+  .scanner-console {
+    grid-template-columns: 1fr !important;
+  }
+  .mobile-scan-actions {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .mobile-qr-reader,
+  .mobile-qr-reader video,
+  .mobile-qr-reader canvas {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* -----------------------------
+   PHONES <= 520px
+   ----------------------------- */
+@media (max-width: 520px) {
+  .view-root {
+    padding: 8px !important;
+  }
+  .panel {
+    padding: 10px !important;
+  }
+
+  .toolbar,
+  .form-actions,
+  .mobile-scan-actions,
+  .inline-actions,
+  .topbar-actions,
+  .table-filters,
+  .tx-filters {
+    grid-template-columns: 1fr !important;
+  }
+
+  .btn,
+  .icon-btn {
+    min-height: 42px !important;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px !important; /* prevent iOS auto zoom */
+  }
+
+  .table-wrap tbody td,
+  table.permission-table tbody td {
+    grid-template-columns: 1fr !important;
+    gap: 3px !important;
+  }
+
+  .equipment-choice {
+    grid-template-columns: 18px minmax(0,1fr) 72px !important;
+  }
+  .equipment-choice .typePackageQty,
+  .equipment-choice .invPackageQty {
+    width: 72px !important;
+    max-width: 72px !important;
+  }
+
+  .mobile-scan-actions {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* -----------------------------
+   VERY SMALL PHONE <= 360px
+   ----------------------------- */
+@media (max-width: 360px) {
+  .equipment-choice {
+    grid-template-columns: 18px minmax(0,1fr) !important;
+  }
+  .equipment-choice .typePackageQty,
+  .equipment-choice .invPackageQty {
+    grid-column: 2 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
