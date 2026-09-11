@@ -124,7 +124,9 @@ function checklistSpecificQty(c){return Math.max(0,Number(c?.specific_assigned_q
 function checklistTypeAllocated(c){return Math.max(0,Number(c?.type_allocated_quantity||0))}
 function typeAllocatedForTransaction(txid,typeId){return state.data.checklist.filter(c=>c.transaction_id===txid&&c.equipment_type_id===typeId).reduce((s,c)=>s+checklistTypeAllocated(c),0)}
 function typeOutForTransaction(txid,typeId){
-  return state.data.checklist.filter(c=>c.transaction_id===txid&&c.equipment_type_id===typeId).reduce((s,c)=>s+Math.min(checklistTypeAllocated(c),checklistOutNow(c)),0)
+  return state.data.checklist
+    .filter(c=>c.transaction_id===txid&&c.equipment_type_id===typeId)
+    .reduce((s,c)=>s+checklistOutNow(c),0)
 }
 function equipmentTypeOptions(selected='',categoryId=''){
   return state.data.equipmentTypes.filter(t=>t.active!==false&&(!categoryId||!t.category_id||t.category_id===categoryId)).sort((a,b)=>alpha(a.name,b.name)).map(t=>{
@@ -170,6 +172,45 @@ async function signedIn(user){
   render();
   subscribeRealtime();
 }
+
+let realtimeReloadTimer=null;
+let realtimeReloadBusy=false;
+let realtimeReloadPending=false;
+
+function scheduleRealtimeReload(source='realtime'){
+  clearTimeout(realtimeReloadTimer);
+  realtimeReloadTimer=setTimeout(async()=>{
+    if(realtimeReloadBusy){
+      realtimeReloadPending=true;
+      return;
+    }
+    realtimeReloadBusy=true;
+    try{
+      await loadAll();
+
+      // Re-render the active page immediately after the fresh state commit.
+      // This is especially important for Equipment because availability is
+      // derived from inventory + dispatch checklist + active repairs.
+      if(typeof render==='function')render();
+
+      // If the dispatch modal is open, refresh its live counters too.
+      const dispatchModal=document.querySelector('[data-dispatch-txid]');
+      const txid=dispatchModal?.dataset?.dispatchTxid;
+      if(txid && typeof updateDispatchModal==='function'){
+        updateDispatchModal(txid);
+      }
+    }catch(err){
+      console.error('Realtime refresh failed:',source,err);
+    }finally{
+      realtimeReloadBusy=false;
+      if(realtimeReloadPending){
+        realtimeReloadPending=false;
+        scheduleRealtimeReload('queued');
+      }
+    }
+  },180);
+}
+
 async function loadAll(){
   if(dataLoadPromise)return dataLoadPromise;
   dataLoadPromise=(async()=>{
@@ -222,6 +263,13 @@ function renderNav(){
   Object.entries(bottom).forEach(([id,m])=>{const el=$(`[data-view="${id}"]`);if(el)el.classList.toggle('permission-hidden',!can(m,'view'))});
   $$('[data-view]').forEach(btn=>btn.classList.toggle('active',btn.dataset.view===state.view));
 }
+
+function refreshEquipmentViewIfActive(){
+  if(state?.view==='inventory' || state?.view==='equipment'){
+    try{render()}catch(err){console.error('Equipment view refresh failed',err)}
+  }
+}
+
 function render(){
   if(!can(moduleForView(state.view),'view'))state.view=can('dashboard','view')?'dashboard':nav.njs.find(([v])=>can(moduleForView(v),'view'))?.[0]||'dashboard';
   renderNav();const map={dashboard:renderDashboard,bookings:renderTransactions,clients:renderClients,catalog:renderCatalog,categories:renderCategories,coupons:renderCoupons,library:renderLibrary,inventory:renderInventory,dispatch:renderDispatch,'movement-audit':renderMovementAudit,repairs:renderRepairs,payments:renderPayments,expenses:renderExpenses,pos:renderPos,reports:renderReports,audit:renderAudit,backup:renderBackup,settings:renderSettings,access:renderAccess};
@@ -534,7 +582,13 @@ function inventoryQtyStats(item){
 }
 function checklistAssigned(c){return Math.max(1,Number(c?.assigned_quantity||1))}
 function checklistOutNow(c){return Math.max(0,Number(c?.out_quantity||0)-Number(c?.returned_quantity||0))}
-function checklistDerivedStatus(c){const assigned=checklistAssigned(c),out=Number(c?.out_quantity||0),returned=Number(c?.returned_quantity||0),now=Math.max(0,out-returned);if(now===0&&returned>=assigned)return 'Returned';if(now===0)return 'Assigned';if(now>=assigned&&returned===0)return 'Out';if(returned>0)return 'Partially Returned';return 'Partially Out'}
+function checklistDerivedStatus(c){
+  const out=Number(c?.out_quantity||0);
+  const returned=Number(c?.returned_quantity||0);
+  const now=Math.max(0,out-returned);
+  if(now===0)return returned>0?'Returned':'Assigned';
+  return 'Out';
+}
 function renderInventory(){
   head('Equipment','Manage actual equipment/models by quantity, type, QR/barcode labels and availability.');
   const invFilter=state.filters.inventory||{category:''};
@@ -645,7 +699,7 @@ function renderDispatch(){
   head('Equipment Dispatch',String(state.profile?.role||'').toLowerCase()==='staff'?'Select a booking/event, then scan equipment OUT or RETURN using phone QR, barcode scanner, or manual code.':'Packages request generic equipment types; scan the actual brand/model you decide to bring.');
   const bookings=bData('transactions').filter(t=>t.status!=='Cancelled').sort((a,b)=>String(a.event_date||'').localeCompare(String(b.event_date||'')));
   const rows=bookings.map(t=>({t,...dispatchRequirementSummary(t.id)}));
-  $('#viewRoot').innerHTML=`<div class="panel dispatch-hero"><div><span class="eyebrow">TYPE-BASED EQUIPMENT CONTROL</span><h2>Event Equipment Check-Out & Return</h2><p class="muted">Select the booking below, then scan the actual equipment. Package quantity is the minimum requirement; you may assign extra/backup units for the event.</p>${String(state.profile?.role||'').toLowerCase()==='staff'?'<div class="staff-dispatch-guide"><strong>Staff workflow:</strong> 1) Choose event • 2) CHECK OUT before leaving • 3) RETURN / IN after the event • 4) Scan every item one unit at a time.</div>':''}</div></div><div class="panel"><div class="panel-head"><div><h2>Booking Dispatch Board</h2><p class="muted">Required Qty includes generic Equipment Types plus any specific equipment/add-ons.</p></div></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Event Date</th><th>Client / Event</th><th>Package</th><th>Required Qty</th><th>Currently Out</th><th>Returned Scans</th><th>Issues</th><th>Action</th></tr></thead><tbody>${rows.map(({t,totalRequired,out,returned,issues})=>`<tr><td>${esc(t.event_date||'')}</td><td><strong>${esc(t.client_name_snapshot||'')}</strong><br><small>${esc(t.venue||'')}</small></td><td>${esc(t.item_name_snapshot||'')}</td><td>${totalRequired}</td><td>${out}</td><td>${returned}</td><td>${issues?`<span class="badge damaged">${issues}</span>`:'0'}</td><td><button class="btn primary small" data-dispatch="${t.id}">Scan Equipment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No bookings available.</div>'}</div>`;
+  $('#viewRoot').innerHTML=`<div class="panel dispatch-hero"><div><span class="eyebrow">TYPE-BASED EQUIPMENT CONTROL</span><h2>Event Equipment Check-Out & Return</h2><p class="muted">Select the booking below, then scan the actual equipment. Package quantity is the minimum requirement; you may assign extra/backup units for the event.</p>${String(state.profile?.role||'').toLowerCase()==='staff'?'<div class="staff-dispatch-guide"><strong>Staff workflow:</strong> 1) Choose event • 2) CHECK OUT before leaving • 3) RETURN / IN after the event • 4) Scan every item one unit at a time.</div>':''}</div></div><div class="panel"><div class="panel-head"><div><h2>Booking Dispatch Board</h2><p class="muted">Package quantities are minimum requirements only. Extra/backup units are allowed whenever physical inventory is available.</p></div></div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Event Date</th><th>Client / Event</th><th>Package</th><th>Required Qty</th><th>Currently Out</th><th>Returned Scans</th><th>Issues</th><th>Action</th></tr></thead><tbody>${rows.map(({t,totalRequired,out,returned,issues})=>`<tr><td>${esc(t.event_date||'')}</td><td><strong>${esc(t.client_name_snapshot||'')}</strong><br><small>${esc(t.venue||'')}</small></td><td>${esc(t.item_name_snapshot||'')}</td><td>${totalRequired}</td><td>${out}</td><td>${returned}</td><td>${issues?`<span class="badge damaged">${issues}</span>`:'0'}</td><td><button class="btn primary small" data-dispatch="${t.id}">Scan Equipment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No bookings available.</div>'}</div>`;
   $$('[data-dispatch]').forEach(b=>b.onclick=()=>openDispatchScanner(b.dataset.dispatch))
 }
 async function stopMobileScanner(){
@@ -819,12 +873,32 @@ async function startMobileScanner(txid){
   }
 }
 function dispatchTypeRows(txid){
-  const reqs=state.data.transactionTypeRequirements.filter(r=>r.transaction_id===txid).sort((a,b)=>alpha(equipmentTypeName(a.equipment_type_id),equipmentTypeName(b.equipment_type_id)));
+  const reqs=state.data.transactionTypeRequirements
+    .filter(r=>r.transaction_id===txid)
+    .sort((a,b)=>alpha(equipmentTypeName(a.equipment_type_id),equipmentTypeName(b.equipment_type_id)));
+
   if(!reqs.length)return '<tr><td colspan="5">No generic equipment type requirements for this booking.</td></tr>';
+
   return reqs.map(r=>{
-    const required=Number(r.required_quantity||0),allocated=typeAllocatedForTransaction(txid,r.equipment_type_id),out=typeOutForTransaction(txid,r.equipment_type_id);
-    const selected=state.data.checklist.filter(c=>c.transaction_id===txid&&c.equipment_type_id===r.equipment_type_id&&checklistTypeAllocated(c)>0).map(c=>{const i=state.data.inventory.find(x=>x.id===c.inventory_item_id);return `${i?.name||'Equipment'} × ${checklistTypeAllocated(c)}`}).join(', ');
-    const extra=Math.max(0,allocated-required);return `<tr><td><strong>${esc(equipmentTypeName(r.equipment_type_id))}</strong></td><td>${required}</td><td>${allocated}${extra?` <span class="badge ready">+${extra} extra</span>`:''}</td><td>${out}</td><td>${esc(selected||'Scan actual equipment to choose')}</td></tr>`
+    const required=Number(r.required_quantity||0);
+    const out=typeOutForTransaction(txid,r.equipment_type_id);
+    const extra=Math.max(0,out-required);
+
+    const selected=state.data.checklist
+      .filter(c=>c.transaction_id===txid&&c.equipment_type_id===r.equipment_type_id&&checklistOutNow(c)>0)
+      .map(c=>{
+        const i=state.data.inventory.find(x=>x.id===c.inventory_item_id);
+        return `${i?.name||'Equipment'} × ${checklistOutNow(c)}`;
+      })
+      .join(', ');
+
+    return `<tr>
+      <td><strong>${esc(equipmentTypeName(r.equipment_type_id))}</strong></td>
+      <td>${required}</td>
+      <td><strong>${out}</strong>${out>=required?` <span class="badge ready">Minimum met</span>`:''}</td>
+      <td>${extra?`<span class="badge ready">${extra} extra</span>`:'0'}</td>
+      <td>${esc(selected||'None currently OUT')}</td>
+    </tr>`;
   }).join('')
 }
 function dispatchActualRows(txid){
@@ -850,7 +924,7 @@ function openDispatchScanner(txid){
   modal('Equipment Dispatch Scanner',`<div class="dispatch-event-head"><div><span class="eyebrow">${esc(tx.event_date||'')}</span><h3>${esc(tx.client_name_snapshot||'Event')}</h3><p>${esc(tx.item_name_snapshot||'')} • ${esc(tx.venue||'No venue')}</p></div></div>
   <div class="scanner-console"><label>Scan Mode<select id="scanMode"><option value="out">CHECK OUT — Going to Event</option><option value="return">RETURN / IN — Back from Event</option></select></label><div class="mobile-scan-actions"><button type="button" class="btn primary" id="startPhoneScan">📷 Scan with Phone Camera</button><button type="button" class="btn" id="stopPhoneScan">Stop Camera</button></div><div id="mobileQrReader" class="mobile-qr-reader hidden"></div><label class="scanner-input-wrap">Barcode / QR / Asset Code<input id="dispatchScanInput" autocomplete="off" inputmode="text" placeholder="Ready for USB/Bluetooth scanner or manual code" autofocus></label><div class="scanner-help">Use phone/tablet camera, iPhone/iPad camera, USB/Bluetooth barcode scanner, dedicated QR/barcode scanner, or manual code. Camera detection submits automatically. External scanners work as keyboard input and automatically submit when they send Enter. For generic requirements, the equipment type determines where the scan is counted.</div><div id="scanFeedback" class="scan-feedback">Scanner ready. Logged in as ${esc(state.profile?.full_name||state.user?.email||'User')}.</div></div>
   <div class="summary-grid dispatch-summary"><div class="summary-box"><small>Total Required Qty</small><strong id="dAssigned">${s.totalRequired}</strong></div><div class="summary-box"><small>Currently Out</small><strong id="dOut">${s.out}</strong></div><div class="summary-box"><small>Returned Scans</small><strong id="dReturned">${s.returned}</strong></div><div class="summary-box"><small>Issues</small><strong id="dIssues">${s.issues}</strong></div></div>
-  <h3 class="section-title">Generic Package Requirements</h3><div class="table-wrap"><table><thead><tr><th>Equipment Type</th><th>Required</th><th>Actual Selected</th><th>Out Now</th><th>Actual Equipment Used</th></tr></thead><tbody id="dispatchTypeRows">${dispatchTypeRows(txid)}</tbody></table></div>
+  <h3 class="section-title">Generic Package Requirements</h3><div class="table-wrap"><table><thead><tr><th>Equipment Type</th><th>Minimum Required</th><th>Currently OUT</th><th>Extra / Backup</th><th>Actual Equipment Currently OUT</th></tr></thead><tbody id="dispatchTypeRows">${dispatchTypeRows(txid)}</tbody></table></div>
   <h3 class="section-title">Actual Equipment / Specific Requirements</h3><div class="table-wrap"><table><thead><tr><th>Actual Equipment</th><th>Type</th><th>Scan Code</th><th>Specific Qty</th><th>Type Allocation</th><th>Out Now</th><th>Returned</th><th>Status</th></tr></thead><tbody id="dispatchRows">${dispatchActualRows(txid)}</tbody></table></div>
   <div class="form-actions"><button class="btn" id="dispatchCloseBtn">Close</button></div>`,{wide:true});
   const input=$('#dispatchScanInput');let scanTimer=null,scanBusy=false,lastKeyAt=0,rapidKeys=0;
@@ -864,124 +938,109 @@ function openDispatchScanner(txid){
   setTimeout(()=>input.focus(),100)
 }
 async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manual',options={}){
-  const feedback=options.silent?null:$('#scanFeedback'),item=state.data.inventory.find(i=>String(i.asset_code||'').toUpperCase()===code);
-  if(!item){if(feedback){feedback.textContent=`Not found: ${code}`;feedback.className='scan-feedback error'}return}
-  const now=new Date().toISOString(),typeId=item.equipment_type_id||null;
+  const feedback=options.silent?null:$('#scanFeedback');
+  const item=state.data.inventory.find(i=>String(i.asset_code||'').toUpperCase()===String(code||'').toUpperCase());
+
+  if(!item){
+    if(feedback){
+      feedback.textContent=`Not found: ${code}`;
+      feedback.className='scan-feedback error';
+    }
+    return {ok:false};
+  }
+
+  const now=new Date().toISOString();
+  const typeId=item.equipment_type_id||null;
   let check=state.data.checklist.find(c=>c.transaction_id===txid&&c.inventory_item_id===item.id);
+
   if(mode==='out'){
     const stats=inventoryQtyStats(item);
+
     if(['Damaged','Missing','Unavailable'].includes(item.status)){
-      if(feedback){feedback.textContent=`Cannot check out ${item.name}: base status is ${item.status}.`;feedback.className='scan-feedback error'}
-      return {ok:false}
-    }
-    if(stats.available<=0){
-      if(feedback){feedback.textContent=`No available quantity left for ${item.name}. Total ${stats.total}, Out ${stats.out}, Repair ${stats.repair}.`;feedback.className='scan-feedback error'}
-      return {ok:false}
-    }
-
-    const typeId=item.equipment_type_id||null;
-    const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
-    const specificQty=checklistSpecificQty(check);
-    const currentOut=checklistOutNow(check);
-    const specificOutCovered=Math.min(specificQty,currentOut);
-    const specificStillNeeded=Math.max(0,specificQty-specificOutCovered);
-
-    // A scan is valid if the actual item is specifically assigned OR
-    // its Equipment Type is required by the booking.
-    if(!check && !typeReq){
       if(feedback){
-        feedback.textContent=`${item.name} is not part of this booking and ${equipmentTypeName(typeId)} is not a package requirement.`;
-        feedback.className='scan-feedback error'
+        feedback.textContent=`Cannot check out ${item.name}: base status is ${item.status}.`;
+        feedback.className='scan-feedback error';
       }
-      return {ok:false}
+      return {ok:false};
     }
 
-    let allocationSource='specific';
-    let isExtraBackup=false;
-
-    // If the specific requirement is already covered, allocate this scan
-    // against the generic type requirement. The generic requirement is a
-    // minimum, so allocation may exceed it as an extra/backup unit.
-    if(specificStillNeeded<=0 && typeReq){
-      allocationSource='equipment_type';
-      const allocated=typeAllocatedForTransaction(txid,typeId);
-      const required=Number(typeReq.required_quantity||0);
-      isExtraBackup=allocated>=required;
-
-      if(!check){
-        const {data,error}=await sb.from('transaction_checklist').insert({
-          transaction_id:txid,
-          inventory_item_id:item.id,
-          equipment_type_id:typeId,
-          status:'Assigned',
-          assigned_quantity:1,
-          specific_assigned_quantity:0,
-          type_allocated_quantity:1,
-          out_quantity:0,
-          returned_quantity:0,
-          checked_at:null,
-          checked_by:null
-        }).select().single();
-        if(error){
-          if(feedback){feedback.textContent=error.message;feedback.className='scan-feedback error'}
-          return {ok:false}
-        }
-        check=data;
-      }else{
-        // Only increase type allocation when simultaneous/current assignment
-        // needs another unit. Historical returned scans do not permanently
-        // block the same equipment from being assigned again.
-        const typeAllocated=checklistTypeAllocated(check);
-        const currentCapacity=Math.max(0,checklistAssigned(check));
-        const currentOutNow=checklistOutNow(check);
-
-        if(currentOutNow>=currentCapacity){
-          const nextType=typeAllocated+1;
-          const nextAssigned=currentCapacity+1;
-          const {data,error}=await sb.from('transaction_checklist').update({
-            equipment_type_id:typeId,
-            type_allocated_quantity:nextType,
-            assigned_quantity:nextAssigned
-          }).eq('id',check.id).select().single();
-
-          if(error){
-            if(feedback){feedback.textContent=error.message;feedback.className='scan-feedback error'}
-            return {ok:false}
-          }
-          check=data;
-        }
+    if(stats.available<=0){
+      if(feedback){
+        feedback.textContent=`No available quantity left for ${item.name}. Total ${stats.total}, Currently Out ${stats.out}, Repair ${stats.repair}.`;
+        feedback.className='scan-feedback error';
       }
-    }else if(check){
-      allocationSource='specific';
-
-      // A returned specific unit can be sent OUT again.
-      // Only increase assigned capacity if the current simultaneous OUT
-      // count already fills the existing specific/type allocation.
-      const currentCapacity=Math.max(1,checklistAssigned(check));
-      const currentOutNow=checklistOutNow(check);
-
-      if(currentOutNow>=currentCapacity){
-        const {data,error}=await sb.from('transaction_checklist').update({
-          assigned_quantity:currentCapacity+1,
-          specific_assigned_quantity:checklistSpecificQty(check)+1
-        }).eq('id',check.id).select().single();
-
-        if(error){
-          if(feedback){feedback.textContent=error.message;feedback.className='scan-feedback error'}
-          return {ok:false}
-        }
-        check=data;
-        isExtraBackup=true;
-      }
+      return {ok:false};
     }
 
-    // OUT/RETURN counters are historical cumulative counters.
-    // Availability is based on OUT minus RETURN, so re-OUT after a return
-    // is valid and simply increments OUT again.
+    const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
+    const hasSpecific=!!check && checklistSpecificQty(check)>0;
+
+    // Package quantity is a MINIMUM only.
+    // Allow this item if it is specifically assigned OR belongs to a required type.
+    if(!hasSpecific && !typeReq){
+      if(feedback){
+        feedback.textContent=`${item.name} is not assigned to this booking and ${equipmentTypeName(typeId)} is not a required equipment type.`;
+        feedback.className='scan-feedback error';
+      }
+      return {ok:false};
+    }
+
+    const required=Number(typeReq?.required_quantity||0);
+    const typeOutBefore=typeId?typeOutForTransaction(txid,typeId):0;
+    const isExtraBackup=!!typeReq && typeOutBefore>=required;
+
+    if(!check){
+      const {data,error}=await sb.from('transaction_checklist').insert({
+        transaction_id:txid,
+        inventory_item_id:item.id,
+        equipment_type_id:typeId,
+        status:'Assigned',
+        assigned_quantity:1,
+        specific_assigned_quantity:0,
+        type_allocated_quantity:1,
+        out_quantity:0,
+        returned_quantity:0,
+        checked_at:null,
+        checked_by:null
+      }).select().single();
+
+      if(error){
+        if(feedback){
+          feedback.textContent=error.message;
+          feedback.className='scan-feedback error';
+        }
+        return {ok:false};
+      }
+      check=data;
+    }
+
+    // Preserve historical counters, but calculate availability/current use
+    // only from OUT minus RETURN. This allows unlimited reuse after return.
     const nextOut=Number(check.out_quantity||0)+1;
-    const next={...check,out_quantity:nextOut};
+    const currentAfter=Math.max(0,nextOut-Number(check.returned_quantity||0));
+
+    const nextAssigned=Math.max(
+      Number(check.assigned_quantity||0),
+      Number(check.specific_assigned_quantity||0),
+      currentAfter,
+      1
+    );
+
+    const nextTypeAllocated=typeReq
+      ? Math.max(Number(check.type_allocated_quantity||0),currentAfter,1)
+      : Number(check.type_allocated_quantity||0);
+
+    const next={
+      ...check,
+      assigned_quantity:nextAssigned,
+      type_allocated_quantity:nextTypeAllocated,
+      out_quantity:nextOut
+    };
 
     const {error}=await sb.from('transaction_checklist').update({
+      equipment_type_id:typeId,
+      assigned_quantity:nextAssigned,
+      type_allocated_quantity:nextTypeAllocated,
       out_quantity:nextOut,
       status:checklistDerivedStatus(next),
       checked_out_at:now,
@@ -992,13 +1051,16 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
     }).eq('id',check.id);
 
     if(error){
-      if(feedback){feedback.textContent=error.message;feedback.className='scan-feedback error'}
-      return {ok:false}
+      if(feedback){
+        feedback.textContent=error.message;
+        feedback.className='scan-feedback error';
+      }
+      return {ok:false};
     }
 
     if(feedback){
       feedback.textContent=`OUT ✓ ${item.name}${isExtraBackup?' — EXTRA / BACKUP UNIT':''}`;
-      feedback.className='scan-feedback success'
+      feedback.className='scan-feedback success';
     }
 
     await audit('EQUIPMENT_OUT','transaction_checklist',check.id,{
@@ -1008,28 +1070,80 @@ async function processDispatchSingleUnit(txid,code,mode,scanMethod='scanner/manu
       equipment_type:equipmentTypeName(typeId),
       asset_code:code,
       quantity:1,
-      requirement_source:allocationSource,
+      package_minimum:required,
+      current_type_out_before:typeOutBefore,
       extra_backup:isExtraBackup,
       scan_method:scanMethod
-    })
+    });
+
   }else{
-    if(!check){if(feedback){feedback.textContent=`${item.name} was not scanned OUT for this booking.`;feedback.className='scan-feedback error'}return}
-    const outQty=Number(check.out_quantity||0),returnedQty=Number(check.returned_quantity||0),outNow=Math.max(0,outQty-returnedQty);
-    if(outNow<=0){if(feedback){feedback.textContent=`No unit currently OUT for ${item.name}.`;feedback.className='scan-feedback warning'}return}
-    const nextReturned=returnedQty+1,next={...check,returned_quantity:nextReturned};
-    const {error}=await sb.from('transaction_checklist').update({returned_quantity:nextReturned,status:checklistDerivedStatus(next),returned_at:now,returned_by:state.user.id,returned_method:scanMethod,checked_at:now,checked_by:state.user.id}).eq('id',check.id);
-    if(error)return toast(error.message,'error');
-    if(feedback){feedback.textContent=`IN ✓ ${item.name} — ${nextReturned}/${outQty} returned`;feedback.className='scan-feedback success'}
-    await audit('EQUIPMENT_RETURN','transaction_checklist',check.id,{transaction_id:txid,inventory_item_id:item.id,equipment_type_id:typeId,equipment_type:equipmentTypeName(typeId),asset_code:code,quantity:1,scan_method:scanMethod})
+    if(!check){
+      if(feedback){
+        feedback.textContent=`${item.name} was not scanned OUT for this booking.`;
+        feedback.className='scan-feedback error';
+      }
+      return {ok:false};
+    }
+
+    const outQty=Number(check.out_quantity||0);
+    const returnedQty=Number(check.returned_quantity||0);
+    const outNow=Math.max(0,outQty-returnedQty);
+
+    if(outNow<=0){
+      if(feedback){
+        feedback.textContent=`No unit currently OUT for ${item.name}.`;
+        feedback.className='scan-feedback warning';
+      }
+      return {ok:false};
+    }
+
+    const nextReturned=returnedQty+1;
+    const next={...check,returned_quantity:nextReturned};
+
+    const {error}=await sb.from('transaction_checklist').update({
+      returned_quantity:nextReturned,
+      status:checklistDerivedStatus(next),
+      returned_at:now,
+      returned_by:state.user.id,
+      returned_method:scanMethod,
+      checked_at:now,
+      checked_by:state.user.id
+    }).eq('id',check.id);
+
+    if(error){
+      if(feedback){
+        feedback.textContent=error.message;
+        feedback.className='scan-feedback error';
+      }
+      return {ok:false};
+    }
+
+    if(feedback){
+      const currentAfter=Math.max(0,outQty-nextReturned);
+      feedback.textContent=`IN ✓ ${item.name} — Currently OUT: ${currentAfter}`;
+      feedback.className='scan-feedback success';
+    }
+
+    await audit('EQUIPMENT_RETURN','transaction_checklist',check.id,{
+      transaction_id:txid,
+      inventory_item_id:item.id,
+      equipment_type_id:typeId,
+      equipment_type:equipmentTypeName(typeId),
+      asset_code:code,
+      quantity:1,
+      scan_method:scanMethod
+    });
   }
+
   if(!options.skipRefresh){
     await loadAll();
+    refreshEquipmentViewIfActive();
     updateDispatchModal(txid);
     if($('#dispatchScanInput'))$('#dispatchScanInput').focus();
   }
+
   return {ok:true,item};
 }
-
 
 function dispatchMaxQtyForScan(txid,item,mode){
   const check=state.data.checklist.find(c=>c.transaction_id===txid&&c.inventory_item_id===item.id);
@@ -1094,8 +1208,8 @@ function openScanConfirmation(txid,code,mode,scanMethod='scanner/manual'){
   const typeId=item.equipment_type_id||null;
   const typeReq=typeId?typeRequiredForTransaction(txid,typeId):null;
   const requiredQty=Number(typeReq?.required_quantity||0);
-  const alreadyAllocated=typeId?typeAllocatedForTransaction(txid,typeId):0;
-  const remainingMinimum=Math.max(0,requiredQty-alreadyAllocated);
+  const currentlyOutForType=typeId?typeOutForTransaction(txid,typeId):0;
+  const remainingMinimum=Math.max(0,requiredQty-currentlyOutForType);
   const actionQuestion=mode==='out'
     ? `Are you sure you will use this equipment?`
     : `Are you sure you are returning this equipment?`;
@@ -1501,7 +1615,13 @@ function subscribeRealtime(){
         await subscribeRealtimeRefresh();
       },250);
     })
-    .subscribe();
+    
+  .on('postgres_changes',{event:'*',schema:'public',table:'inventory_items'},()=>scheduleRealtimeReload('inventory_items'))
+  .on('postgres_changes',{event:'*',schema:'public',table:'inventory_categories'},()=>scheduleRealtimeReload('inventory_categories'))
+  .on('postgres_changes',{event:'*',schema:'public',table:'equipment_types'},()=>scheduleRealtimeReload('equipment_types'))
+  .on('postgres_changes',{event:'*',schema:'public',table:'transaction_checklist'},()=>scheduleRealtimeReload('transaction_checklist'))
+  .on('postgres_changes',{event:'*',schema:'public',table:'repair_records'},()=>scheduleRealtimeReload('repair_records'))
+  .subscribe();
 }
 async function subscribeRealtimeRefresh(){
   if(refreshInProgress)return;
