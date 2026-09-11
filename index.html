@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>NJ's Mobile Lights and Sound | Event Management System</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body class="theme-njs">
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+  <div id="loginScreen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="login-branding nj-login-branding" aria-label="NJ's Mobile Lights and Sound">
+        <div class="login-logo-box njs-login-logo"><img src="assets/images/logo.png" alt="NJ's Mobile Lights and Sound Logo" class="login-logo"></div>
+      </div>
+      <h1>Event Production Management System</h1>
+      <p>NJ's Mobile Lights and Sound</p>
+      <form id="loginForm" class="stack-form">
+        <label>Email<input id="loginEmail" type="email" required autocomplete="username"></label>
+        <label>Password<input id="loginPassword" type="password" required autocomplete="current-password"></label>
+        <button class="btn primary" type="submit">Sign In</button>
+      </form>
+      <div id="loginMessage" class="form-message"></div>
+    </div>
+  </div>
+
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand brand-logo-wrap">
+        <div class="brand-logo-panel" aria-label="NJ's Mobile Lights and Sound"><img src="assets/images/logo.png" alt="NJ's Mobile Lights and Sound Logo" class="brand-logo"></div>
+        <div class="brand-copy">
+          <strong id="brandName">NJ's Mobile Lights and Sound</strong>
+          <small>Event Production Management</small>
+        </div>
+      </div>
+
+      <nav id="mainNav"></nav>
+      <div class="sidebar-bottom">
+        <button class="nav-btn" data-view="access">👥 Users & Roles</button>
+        <button class="nav-btn" data-view="audit">🛡️ Audit Log</button>
+        <button class="nav-btn" data-view="backup">💾 Backup & Import</button>
+        <button class="nav-btn" data-view="settings">⚙️ Settings</button>
+        <button class="nav-btn" id="logoutBtn">↪ Sign Out</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-btn mobile-only" id="menuBtn" aria-label="Open menu">☰</button>
+        <div class="topbar-copy"><h1 id="pageTitle">Dashboard</h1><p id="pageSubtitle">Overview of your business.</p></div>
+        <div class="topbar-actions">
+          <span class="mode-pill" id="modePill">CHECKING DATABASE…</span>
+          <button class="btn ghost" id="refreshBtn">↻ Refresh</button>
+          <button class="btn primary" id="quickAddBtn">+ Quick Add</button>
+        </div>
+      </header>
+      <section id="viewRoot" class="view-root"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head"><h2 id="modalTitle">Modal</h2><button class="icon-btn" id="modalClose" aria-label="Close">×</button></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <input type="file" id="jsonFileInput" accept="application/json,.json" hidden>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
